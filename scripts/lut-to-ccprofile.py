@@ -12,7 +12,8 @@ lut-to-ccprofile.py —— 把 .cube 胶片 LUT 打成 Adobe「创意配置文�
   * wrapper 预设  .xmp  →  同一目录，用 crs:Look 引用上面的 UUID，一键切换
   * .dat                →  Adobe 自动生成的配置文件索引缓存，不用管
 
-对比 Lightroom「预设」只能近似（曲线+HSL），这条路径是**真 3D LUT**，保真度 100%。
+对比 Lightroom「预设」只能近似（曲线+HSL），这条路径把 LUT **原样编码进 RGBTable**，
+不做降级为曲线的近似。（不声称百分比：仓库没有可复现的保真度评分方法。）
 
 二进制格式（逆出来的，与小节对应的解码器互相验证过）：
   u32 type=1, u32 version=1, u32 dims=3, u32 divisions
@@ -435,7 +436,7 @@ def main() -> int:
                     help="在 LR 配置文件浏览器里显示的分组名")
     ap.add_argument("--protect", type=float, default=0.0,
                     help="护高光阈值 0~1（如 0.62=亮度超过 158/255 的部分平滑混回原样，"
-                         "纯白保持 255，不再被胶片肩部压到 ~209）")
+                         "L=1.0 时输出=输入，纯白保持 255，不再受胶片肩部压制）")
     args = ap.parse_args()
 
     out_dir = Path(args.out); out_dir.mkdir(parents=True, exist_ok=True)

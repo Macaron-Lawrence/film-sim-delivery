@@ -9,16 +9,21 @@ description: 把胶片模拟外观（.cube LUT / HaldCLUT PNG / 光谱模拟烘�
 本 skill 只负责**交付层**：拿到 LUT → 标定 → 转目标格式 → 安装 → 验收。
 素材（LUT 本体、成品配置）**不进 skill 目录**，放在 `FILMSIM_ROOT` 指向的目录里。
 
-## 0. 三条硬规则（先读，能省掉 80% 的返工）
+## 0. 三条硬规则（先读，能省掉大部分返工）
 
 1. **Lightroom 不支持 .cube / HaldCLUT**。要进 LR，必须做成 **Adobe 创意配置文件（XMP + 内嵌 RGBTable）**。
    直接给用户 `.cube` 或让他"导入 LUT"是错的——LR 没有这个入口。
-   （退路：如果用户的环境拿不到 dcp、或只要"能叠加的预设"，用 `lut-to-xmp.py`，
-   那是曲线近似，保真度降到 ~80%，要明确告诉用户。）
-2. **每个 LUT 的曝光定位都不同，必须逐卷标定**。实测跨度 0.40–1.67；
-   共用一个系数会让某些卷明显偏亮或偏暗。`calibrate-luts.py` 用二分求根算出来。
-3. **不做护高光，纯白会被压到 ~209**（胶片印片肩部），高光区细节只剩原来的 1/6——
+   （退路：如果用户的环境拿不到 dcp、或只要"能叠加的预设"，用 `lut-to-xmp.py`。
+   那是参数化近似，不是编码后的 3D LUT。仓库尚未建立可复现的保真度评分方法，
+   因此不提供保真度百分比——要如实告诉用户这一点，不要给数字。）
+2. **每个 LUT 的曝光定位都不同，必须逐卷标定**。共用一个系数会让某些卷明显偏亮或偏暗。
+   `calibrate-luts.py` 用二分求根算出来。
+   （早期文档里的 pre-gain 范围 0.40–1.67 属未归档的历史报告值，见 `references/calibration.md` §0；
+   对当前输入请重新跑标定，不要沿用该范围。）
+3. **不做护高光，纯白会被明显压低**（胶片印片肩部），高光区细节大幅丢失——
    用户会直接说"高光被切掉了"。默认就带 `--protect 0.68`。
+   （CI 在合成 fixture 上验证的是纯白输出受压迫、断言范围 0–220；文档中的 "209" 是未归档
+   测试条件下的历史报告值，不代表所有 LUT——见 `references/calibration.md` §0。）
 
 细节都在 `references/pitfalls.md`（7 条，全是踩出来的）。
 
@@ -31,7 +36,7 @@ description: 把胶片模拟外观（.cube LUT / HaldCLUT PNG / 光谱模拟烘�
 ├─ 「批量给一批图套胶片」 ─────────────────→ §3-A（apply-look.sh / try-looks.py）
 ├─ 「在 ART 里用」 ───────────────────────→ §3-B（make-art-profiles / setup-art-bridge）
 ├─ 「我要某个胶片（Portra/Velvia/黑白…）」 ─→ §5 取素材（sources.md + fetch-sources）
-└─ 「只能用预设，不能装配置文件」 ─────────→ §3-C（曲线近似，说明保真度）
+└─ 「只能用预设，不能装配置文件」 ─────────→ §3-C（参数化近似；不提供保真度百分比）
 ```
 
 ## 2. 主线：LUT → Lightroom 创意配置文件
@@ -83,12 +88,13 @@ python3 scripts/try-looks.py 照片.tif --lut-dir "$FILMSIM_ROOT/luts"   # 批�
   `Invalid LUT parameters`——这是最容易踩的坑之一。
 - ART 的 CLUT 目录从 Preferences 里设；`.arp` 加工配置用 `make-art-profiles.py` 生成。
 
-**C. 只能给预设（保真度降级）**
+**C. 只能给预设（参数化近似）**
 ```bash
 python3 scripts/lut-to-xmp.py --dir "$FILMSIM_ROOT/luts" --out "$FILMSIM_ROOT/lr-presets"
 ```
-从 LUT 反解出曲线 + 8 带 HSL + 颜色分级写成 XMP 预设。**必须告知用户这是近似**（实测约 75–85%），
-因为 3D LUT 的跨通道色相扭转 LR 表达不了。
+从 LUT 反解出曲线 + 8 带 HSL + 颜色分级写成 XMP 预设。
+**必须告知用户：这是参数化近似，不是编码后的 3D LUT。仓库尚未建立可复现的保真度评分方法，
+因此不提供保真度百分比。** 原因是 3D LUT 的跨通道色相扭转 LR 表达不了。
 
 ## 4. 诊断：套上后不对，怎么查
 
@@ -98,7 +104,7 @@ python3 scripts/lut-to-xmp.py --dir "$FILMSIM_ROOT/luts" --out "$FILMSIM_ROOT/lr
 |---|---|---|
 | 整张发灰、对比低 | 元数据与基底是否配对（§2 注释） | 中灰应在 128 附近；错配时整片漂移 |
 | 偏暗 | pre-gain 是否逐卷标定过 | 平均亮度比应在 0.95–1.05 |
-| 高光发白/没细节 | 有没有做护高光 | 最亮 5% 应 ≥240；未护高光只有 ~209 |
+| 高光发白/没细节 | 有没有做护高光 | 最亮 5% 应 ≥240；未护高光会明显低于此（合成 fixture 断言纯白 0–220） |
 | 颜色整个反了 | 相纸配错（正片配了负片相纸） | `qa-luts.py` 会直接标红 |
 | 某些卷偏、某些卷正常 | 共用了同一个 pre-gain | 逐卷标定后应一致 |
 

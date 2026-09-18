@@ -43,7 +43,8 @@
    - 搜 `*<机型>*Adobe Standard*.dcp`
 2. 没有 → 三条路：
    a. 装线性基底 dcp（`fetch_sources.sh fuji`），改生成 `--space linear`；
-   b. 退回**预设**路径（`lut-to-xmp.py`，不需要 dcp，代价是保真度降到约 80%）；
+   b. 退回**预设**路径（`lut-to-xmp.py`，不需要 dcp；代价是降级为参数化近似，
+      不是真正的 3D LUT——仓库未建立可复现的保真度评分方法，不给百分比）；
    c. 打开的是 RAW 吗？创意配置文件对**非 RAW**（JPEG/TIFF）通常不生效。
 3. 我们的 profile 里 `crs:CameraModelRestriction` **留空** → 不限制机型，任何相机都能用同一份配置文件。
 

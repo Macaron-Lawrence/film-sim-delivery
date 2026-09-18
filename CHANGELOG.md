@@ -4,6 +4,37 @@ All notable changes to `film-sim-delivery`.
 
 ## [Unreleased]
 
+- **Provenance audit of the numeric claims.** An external review checked every figure in
+  the docs against what the repository can actually demonstrate, and the results were
+  applied:
+  - **Fidelity percentages removed.** `SKILL.md`, `references/pitfalls.md` and
+    `references/hosts.md` claimed the `lut-to-xmp.py` path keeps "~80 %" (or "75–85 %") of the
+    look, while the README states no fidelity percentage is established. There was no
+    definition, scoring formula, test LUT, test image, script or benchmark behind the
+    number, so all of them were replaced by: parameterised approximation, not an encoded
+    3D LUT; no reproducible fidelity-scoring method exists, so no percentage is given.
+    (`scripts/lut-to-ccprofile.py` and `scripts/lut-to-xmp.py` no longer say "100 %" either.)
+  - **Unarchived numbers now labelled as such.** `references/calibration.md` gained a §0
+    "provenance and evidence status" section that separates what CI can recompute from what
+    only early documents report. The label is **unarchived historical report, not covered by
+    CI** — deliberately not "historical measurement", which would still assert the tests
+    happened and were sound. Covers the 6-RAW aggregate (0.986 / 247 / 3.31 % / 5.06), the
+    0.40–1.67 pre-gain span, and the 209 white-point figure.
+  - **What CI does prove, stated explicitly:** on a synthetic fixture, unprotected white
+    output is in 0–220 (`evals/make_fixtures.py`) and the bad sample is ≤ 215
+    (`evals/grade.py`). That is a synthetic phenomenon, not a value for real LUTs.
+  - **Arithmetic error found while auditing.** `calibration.md` §2 claimed inputs
+    200/220/240/255 map to 198/214/237/255 with `--protect 0.68`. Recomputing with the
+    documented formula and that section's own unprotected table gives **194.0/212.5/237.0/255.0**
+    — 240 and 255 match, 200 and 220 are off by 4.0 and 1.5 and cannot be reproduced from
+    the document itself. The recomputed values are now shown and the discrepancy is noted.
+  - **`top5pct_median` definition pinned.** Field name means median; some prose said mean.
+    Documentation now states the median, and `verification-schema.md` records that the grader
+    evaluates `brightness_ratio`, `top5pct_median`, `pct_ge_250` and `highlight_detail_std`
+    against declared values without recomputing them from source images.
+  - `references/verification-schema.md` marks its example numbers as placeholders, because
+    those same values had been reused as if they were measurements.
+
 - **README rewritten** to describe what the code actually does: a per-workflow
   status table that names what is *not* verified, explicit dependency and
   base-profile requirements, a full script reference with side effects, and
@@ -76,10 +107,15 @@ format → install → verification`.
 - Space ↔ metadata ↔ base-profile pairing corrected: `display` → `Adobe Standard`
   + `(1,3,0,0.0,1.0)`; `linear` → `Adobe Standard Linear` + `(3,1,0,1.0,1.0)`.
   A mismatch double-applies gamma and is the #1 cause of "everything is grey".
-- Highlight protection: `--protect 0.68` restores brightness ratio 0.915 → 0.986,
-  top-5 % 207.6 → 247.1, pixels ≥ 250 from 0 % → 3.31 %, highlight-detail std
-  1.02 → 5.06 (untreated original: 1.000 / 248.1 / 4.27 % / 6.10).
-- Per-LUT calibration is mandatory: required gain spans 0.40–1.67 across sources.
+- Highlight protection: `--protect 0.68` blends high lights back toward the input.
+  (The 0.3.0 release note also carried an aggregate metric set — 0.986 / 247.1 /
+  3.31 % / 5.06 — reported from 6 unidentified RAW files. The RAW files, hashes,
+  parameters, software environment, measurement script and result files were never
+  archived, and CI does not recompute these values; see `references/calibration.md` §0.)
+- Per-LUT calibration is mandatory. (The 0.3.0 release note also cited a
+  0.40–1.67 pre-gain span; that set of LUTs was never archived with the repository,
+  so it is recorded here as an unarchived historical report, not a reproducible
+  measurement — see `references/calibration.md` §0.)
 
 ### Evals
 - 3 artifact-graded tasks (deliver / diagnose space mismatch / diagnose missing

@@ -385,11 +385,11 @@ LICENSE                   repository code license
 Further documentation:
 
 - [`references/rgb-table-format.md`](references/rgb-table-format.md) explains the Adobe table layout.
-- [`references/calibration.md`](references/calibration.md) discusses the intended calibration and highlight-protection model.
+- [`references/calibration.md`](references/calibration.md) discusses the intended calibration and highlight-protection model. Its §0 separates what CI can recompute from the figures that only early documents report; those carry the label **unarchived historical report, not covered by CI**.
 - [`references/hosts.md`](references/hosts.md) records host assumptions and untested cases.
 - [`references/sources.md`](references/sources.md) records upstream source and license notes.
 - [`references/sourcing-playbook.md`](references/sourcing-playbook.md) gives a source-review workflow.
-- [`references/pitfalls.md`](references/pitfalls.md) collects known failure modes. Some older claims in deeper documents may be stronger than current automated coverage; source code and this README define the implemented behavior.
+- [`references/pitfalls.md`](references/pitfalls.md) collects known failure modes. Some older claims in deeper documents may be stronger than current automated coverage; source code and this README define the implemented behavior. Where a deeper document quotes a number, check its provenance label first — figures CI cannot recompute are marked **unarchived historical report, not covered by CI**.
 
 ## License
 

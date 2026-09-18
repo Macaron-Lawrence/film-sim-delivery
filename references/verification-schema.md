@@ -2,6 +2,9 @@
 
 > 每次交付都在交付目录写一份 `verification.json`。**验收只读这个文件 + 独立复核它的数字**，
 > 不采信对话里的自述。原因：评测与复盘都需要可独立复算的凭证。
+>
+> ⚠️ 下面示例里的**每个数字都是占位示例，不是任何真实测量的记录**。
+> 历史上这些示例值曾被误当作实测结果引用；写你自己的文件时请用当场算出来的值。
 
 ---
 
@@ -52,7 +55,7 @@
 | `checks.mid_gray_out` | 118–145（取决于标定模式：midgray≈128 / brightness≈138） |
 | `checks.white_out` | ≥ 250（护高光生效） |
 | `checks.brightness_ratio` | 0.95–1.05 |
-| `checks.top5pct_median` | ≥ 240 |
+| `checks.top5pct_median` | ≥ 240（原图亮度前 5% 像素的输出亮度**中位数**；字段名即定义，早期行文误写作"均值"） |
 | `checks.pct_ge_250` | ≥ 2.5 |
 | `checks.highlight_detail_std` | ≥ 3.5 |
 | `outputs.table_id` | = 交付表内容的 MD5（大写十六进制） |
@@ -63,6 +66,10 @@
 2. **独立**解出 `outputs.profile` 里的 RGBTable，重算 `gray_response` / `mid_gray_out` / `white_out` /
    `decode_error_lsb`，与文件里声明的数字比对（防止"写了数字但没做"）；
 3. 再对阈值判定。
+
+注意评分器**只从交付表重算** `gray_response` / `mid_gray_out` / `white_out` / `decode_error_lsb`；
+`brightness_ratio` / `top5pct_median` / `pct_ge_250` / `highlight_detail_std` 这四项它按你声明的值判阈值，
+**不从源图复算**——所以这四项尤其要靠你自己如实测。
 
 所以：**数字必须是真算出来的**。声明与独立复核差得太多，等同于没做验证。
 

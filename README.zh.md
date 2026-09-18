@@ -384,11 +384,11 @@ LICENSE                   仓库代码许可证
 延伸阅读：
 
 - [`references/rgb-table-format.md`](references/rgb-table-format.md) 讲解 Adobe 表格布局。
-- [`references/calibration.md`](references/calibration.md) 讨论预期的标定与高光保护模型。
+- [`references/calibration.md`](references/calibration.md) 讨论预期的标定与高光保护模型。其 §0 把 **CI 能复算的** 与 **只有早期文档记录的** 数值分开列出；后者统一标注为**未归档的历史报告值，未纳入 CI**。
 - [`references/hosts.md`](references/hosts.md) 记录宿主假设与未测情形。
 - [`references/sources.md`](references/sources.md) 记录上游来源与许可证说明。
 - [`references/sourcing-playbook.md`](references/sourcing-playbook.md) 给出素材审阅流程。
-- [`references/pitfalls.md`](references/pitfalls.md) 汇总已知失败模式。深层文档里的一些较早断言，可能比当前的自动化覆盖更强；**以源代码和本 README 描述的行为为准**。
+- [`references/pitfalls.md`](references/pitfalls.md) 汇总已知失败模式。深层文档里的一些较早断言，可能比当前的自动化覆盖更强；**以源代码和本 README 描述的行为为准**。看到深层文档引用具体数值时，先看它的来源标注——CI 无法复算的数字统一标为**未归档的历史报告值，未纳入 CI**。
 
 ## 许可证
 

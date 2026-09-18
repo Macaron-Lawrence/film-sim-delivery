@@ -11,7 +11,8 @@ lut-to-xmp.py —— 把 spektrafilm 的 .cube 胶片 LUT 转成 Lightroom 可�
      * 全局 饱和度/鲜艳度：从彩度响应反解
      * 三段颜色分级（阴影/中间调/高光）：从中性色偏反解
      * 颗粒 / 暗角 / 锐化：按胶片的"味道"预设表
-   想要 100% 保真请走 LUT 路线（ART / 外部编辑器 / 命令行套 LUT）。
+   本脚本产出的是参数化近似，不是编码后的 3D LUT；仓库没有可复现的保真度评分方法，
+   因此不提供保真度百分比。要保留跨通道色相扭转请走 LUT 路线（ART / 外部编辑器 / 命令行套 LUT）。
 
 用法：
   python3 scripts/lut-to-xmp.py                 # 转换 <root>/luts/*.cube
