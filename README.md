@@ -1,186 +1,394 @@
 # film-sim-delivery
 
-**An Agent Skill that delivers a film look into a real photo workflow** —
-`LUT → exposure calibration → target format → install → verification`.
+`film-sim-delivery` is an [Agent Skill](https://agentskills.io) and a collection of standalone Python utilities for delivering static-image film looks. It can parse and apply LUTs, calibrate exposure placement, convert LUTs to Adobe creative profiles or HaldCLUT images, install generated XMP files, build contact sheets, fetch or curate source material, and run synthetic checks.
 
-A host-agnostic [Agent Skill](https://agentskills.io): drop the folder into any
-skills directory (Claude Code / Codex / DSH / anything that reads `SKILL.md`),
-or just use the scripts as a plain CLI. No host-specific APIs.
+This repository is not a LUT collection, a raw converter, a camera-profile generator, or a video color-management system. It includes one synthetic `.cube` fixture for tests, but no third-party LUT collection. Adobe applications, ART, RawTherapee, Resolve, and third-party base profiles are not bundled.
 
-*[中文说明见下文](#中文说明)*
+## Supported workflows
 
----
+| Workflow | Status and limits |
+|---|---|
+| Adobe creative profiles | Implemented by `scripts/lut-to-ccprofile.py`. It embeds a resampled 3D LUT in XMP as an Adobe `RGBTable` and writes a wrapper preset. Actual Lightroom, Camera Raw, Bridge, and Photoshop loading is not tested in CI. The required base profile must already exist in the Adobe host. |
+| `.cube` to HaldCLUT | Implemented by `scripts/cube-to-hald.py`. It writes an 8-bit PNG and supports a `.cube` 1D shaper. Intended for ART and RawTherapee Film Simulation, but host loading is not tested in CI. |
+| Direct image processing | Implemented by `scripts/lr-filmsim.py` for `.cube` and HaldCLUT inputs. TIFF-family files use `tifffile`; other Pillow-supported formats use Pillow. `scripts/apply-look.sh` is a POSIX convenience wrapper. |
+| Approximate XMP presets | Implemented by `scripts/lut-to-xmp.py` for eight hard-coded film names. It derives tone curves, HSL adjustments, color grading, saturation, vibrance, grain, sharpening, noise reduction, and vignette settings. It is an approximation, not an encoded 3D LUT, and no fidelity percentage is established. |
+| Exposure calibration | Implemented by `scripts/calibrate-luts.py`. It solves a per-LUT pre-gain by bisection using either midpoint or weighted neutral-ramp brightness. It handles top-level `.cube`, `.png`, and `.tif` files. |
+| Installation and removal | Implemented by `scripts/install_ccprofiles.py`; `scripts/install-lr-ccprofiles.sh` wraps it on POSIX systems. It copies or removes XMP files by matching source filenames. It does not install DCP base profiles. |
+| Basic LUT QA | Implemented by `scripts/qa-luts.py`. It reports sampled midpoint, white, black, and contrast, and flags weak or inverted grayscale response. It does not test monotonicity, clipping, gamut range, or deviation from identity. |
+| Contact sheets | Implemented by `scripts/try-looks.py`. It applies top-level `.cube` and `.png` LUTs to one Pillow-readable image, writes JPEG previews, and assembles a labeled JPEG sheet. |
+| Source acquisition and curation | `scripts/fetch_sources.sh` lists or downloads selected upstream sources. `scripts/curate-rt-halclut.py` copies a named subset, or all PNGs, from a RawTherapee HaldCLUT tree. These workflows use upstream licenses and may use substantial disk and network bandwidth. |
+| Spectral LUT baking | `scripts/bake-spectral-luts.py` drives the optional `spectral_film_lut` package for a built-in job list. This path is optional and not exercised by repository CI. |
+| Fixtures, grader, and self-test | `evals/make_fixtures.py` creates deterministic synthetic fixtures. `evals/grade.py` grades separately produced evaluation artifacts. `scripts/selftest.py` checks a synthetic calibration and Adobe table encode/decode path. These are internal checks, not application-host integration tests. |
 
-## The problem this solves
+## Requirements
 
-Film simulation is easy to *look at* and surprisingly hard to *deliver*.
-Four failure modes eat almost all the time:
+The standalone Python tools require:
 
-| Symptom | Real cause | Fix in this skill |
+- Python 3.9 or newer
+- `numpy>=1.21`
+- `Pillow>=9.0`
+- `tifffile>=2021.11.2`
+
+Those versions are declared in [`requirements.txt`](requirements.txt). The repository has no lockfile, Python package metadata, or installed console entry point. Run scripts from the repository checkout.
+
+Some workflows have extra requirements:
+
+- Bash for `*.sh` wrappers. Native Windows users can use the Python entry points where one exists.
+- `git`, `curl`, and `unzip` for the relevant branches of `scripts/fetch_sources.sh`.
+- `uv` for the `spektra` fetch branch. The `spectra` branch can use `uv` or `venv` and `pip`.
+- The separately installed `spectral_film_lut` package for `scripts/bake-spectral-luts.py`. Its current compatibility requirements are independent of this repository.
+- An Agent Skills-compatible host if you want agent discovery. The Python utilities do not depend on an agent runtime.
+
+Adobe creative profiles also depend on an Adobe host and a base camera profile that the host can resolve. The encoder defaults are:
+
+| Encoder space | Adobe table metadata | Default base profile |
 |---|---|---|
-| "I have a `.cube`, how do I load it into Lightroom?" | **Lightroom / Camera Raw cannot import LUTs at all** — there is no such entry point. | Encode the LUT into an Adobe **creative profile** (`crs:RGBTable` inside an XMP): `scripts/lut-to-ccprofile.py` |
-| Washed out, flat, grey image after applying a profile | **space ↔ metadata ↔ base-profile mismatch.** `display` must pair with `Adobe Standard` + `(1,3,0,0.0,1.0)`; `linear` with `Adobe Standard Linear` + `(3,1,0,1.0,1.0)`. Any other combination double-applies gamma. | `references/rgb-table-format.md` + the encoder asserts the pairing |
-| "It's ~20 % darker than my reference" | No per-LUT **exposure calibration**. The required gain spans **0.40–1.67** across sources; one shared value is always wrong for some stock. | `scripts/calibrate-luts.py` (bisection on mid-grey or brightness) |
-| Whites capped, highlights flat and detail-less | Film **print shoulder** rolls off to ~209/255. Highlight *detail* std collapses from 6.10 to 1.02. | Highlight protection baked into the table (`--protect 0.68`) |
+| `display` | `(1, 3, 0, 0.0, 1.0)` | `Adobe Standard` |
+| `linear` | `(3, 1, 0, 1.0, 1.0)` | `Adobe Standard Linear` |
 
-Measured on 6 real ARW files (Apple-engine renders): unprotected LUT gives
-brightness ratio 0.915 / top-5 % 207.6 / 0 % of pixels ≥ 250 / highlight-detail
-std 1.02; with protection, 0.986 / 247.1 / 3.31 % / 5.06 — against 1.000 / 248.1
-/ 4.27 % / 6.10 for the untreated original.
+The scripts do not provide those DCP files. `Adobe Standard Linear` normally requires a separately acquired profile for the camera. Even `Adobe Standard` availability is a host and camera concern. An empty `crs:CameraModelRestriction` in generated XMP does not remove the base-profile requirement.
 
-## Install
+## Installation
 
-The repository root **is** the skill, so cloning it into a skills directory is all
-it takes:
+### Use as an Agent Skill
+
+Clone or copy the repository into a directory your agent host scans for skills, then follow that host's skill-installation instructions. The repository root contains [`SKILL.md`](SKILL.md), with supporting material under [`references/`](references/) and executable utilities under [`scripts/`](scripts/).
+
+Cloning only makes the skill files available. Any command the skill runs still needs Python and the dependencies above, plus input LUTs and host-specific prerequisites.
 
 ```bash
-# use your host's skills path (Claude Code ≈ ~/.claude/skills, DSH ≈ ~/.dsh/skills, …)
-git clone https://github.com/Macaron-Lawrence/film-sim-delivery.git \
-          ~/.claude/skills/film-sim-delivery
+git clone https://github.com/Macaron-Lawrence/film-sim-delivery.git
+cd film-sim-delivery
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-Then just talk to the agent — 「把 `$FILMSIM_ROOT/luts` 里的卷做成 Lightroom 创意配置文件」,
-or 「我套上胶片配置后发灰、偏暗，帮我看」. Nothing else to register: the host reads
-`SKILL.md` (`name` + `description`) and pulls in `references/` and `scripts/` only
-when the task needs them.
+On Windows, use the equivalent activation or interpreter path for the virtual environment.
 
-Prefer a plain CLI? The scripts run standalone — see Quick start below. Nothing in
-this repo calls a host-specific API.
+### Use as standalone CLIs
 
-## Quick start
+Clone the repository, create an environment, install `requirements.txt`, and invoke scripts by path. There is no `film-sim-delivery` executable to install.
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-export FILMSIM_ROOT=/path/to/your/library     # your LUTs live in $FILMSIM_ROOT/luts
+git clone https://github.com/Macaron-Lawrence/film-sim-delivery.git
+cd film-sim-delivery
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python scripts/selftest.py
+```
 
-# 1) sanity-check the LUTs (inverted / crushed / mismatched tables)
-python3 scripts/qa-luts.py --dir "$FILMSIM_ROOT/luts"
+## Quick start with an arbitrary LUT library
 
-# 2) calibrate exposure per LUT, together with highlight protection
-python3 scripts/calibrate-luts.py --dir "$FILMSIM_ROOT/luts" \
-        --mode brightness --protect 0.68 --out "$FILMSIM_ROOT/luts/_calibration.json"
+The encoder contains a hard-coded `NAMES` mapping used for display names. For arbitrary filenames, `--allow-unknown` is required. Without it, recognized input files whose stems are absent from `NAMES` are silently skipped. If at least one supported input file was discovered, the command can report that it generated zero profiles and still exit successfully. Check the generated count and output directory.
 
-# 3) build Adobe creative profiles (+ wrapper presets)
-python3 scripts/lut-to-ccprofile.py --dir "$FILMSIM_ROOT/luts" \
-        --calibration "$FILMSIM_ROOT/luts/_calibration.json" \
-        --out "$FILMSIM_ROOT/lr-ccprofiles" \
-        --space display --protect 0.68 --label "HP" --group "Film Simulation"
+The scripts only scan the specified directory itself, not subdirectories. This example uses an explicit working library:
 
-# 4) install (macOS / Windows / Linux paths are auto-detected)
-python3 scripts/install_ccprofiles.py install
-#    restart Lightroom → Profile browser → your group
+```bash
+export FILMSIM_ROOT=/absolute/path/to/film-work
+mkdir -p "$FILMSIM_ROOT/luts"
+# Copy your .cube or HaldCLUT .png/.tif files into $FILMSIM_ROOT/luts first.
 
-# 5) self-test: build a LUT → calibrate → encode → decode → assert
+python3 scripts/qa-luts.py \
+  --dir "$FILMSIM_ROOT/luts"
+
+python3 scripts/calibrate-luts.py \
+  --dir "$FILMSIM_ROOT/luts" \
+  --mode brightness \
+  --protect 0.68 \
+  --out "$FILMSIM_ROOT/luts/_calibration.json"
+
+python3 scripts/lut-to-ccprofile.py \
+  --dir "$FILMSIM_ROOT/luts" \
+  --calibration "$FILMSIM_ROOT/luts/_calibration.json" \
+  --out "$FILMSIM_ROOT/lr-ccprofiles" \
+  --space display \
+  --protect 0.68 \
+  --group "Film Simulation" \
+  --allow-unknown
+```
+
+Use the same `--protect` value for calibration and profile generation. The encoder reads `pre_gain` from the calibration JSON, but it does not verify the JSON's recorded `mode` or `protect` values.
+
+Inspect before installing:
+
+```bash
+python3 scripts/install_ccprofiles.py list \
+  --src "$FILMSIM_ROOT/lr-ccprofiles"
+
+python3 scripts/install_ccprofiles.py install \
+  --src "$FILMSIM_ROOT/lr-ccprofiles" \
+  --dry-run
+```
+
+Then install to an explicit Adobe settings directory, or allow the installer to choose its platform-specific default:
+
+```bash
+python3 scripts/install_ccprofiles.py install \
+  --src "$FILMSIM_ROOT/lr-ccprofiles"
+```
+
+Restart the Adobe host and test on representative raw files. The repository cannot establish host compatibility from the generated XMP alone.
+
+## Task-oriented workflows
+
+### Apply a LUT directly
+
+By default, `lr-filmsim.py` replaces each input file in place. Use `--out` unless overwrite is intentional.
+
+```bash
+python3 scripts/lr-filmsim.py \
+  --lut "$FILMSIM_ROOT/luts/look.cube" \
+  --out "$FILMSIM_ROOT/rendered" \
+  --suffix _look \
+  --pre-gain 1.0 \
+  --strength 0.75 \
+  photo.tif photo.jpg
+```
+
+Inspect a LUT without processing images:
+
+```bash
+python3 scripts/lr-filmsim.py \
+  --lut "$FILMSIM_ROOT/luts/look.cube" \
+  --info
+```
+
+For a linear-to-linear LUT, add `--linear-pipeline`. For a `.cube` with `LUT_1D_SIZE`, the parser applies the shaper before the 3D table.
+
+The POSIX wrapper supports fuzzy LUT-name matching and one-level directory batches:
+
+```bash
+FILMSIM_ROOT=/absolute/path/to/film-work \
+PRE_GAIN=1.0 \
+bash scripts/apply-look.sh look \
+  --out "$FILMSIM_ROOT/rendered" \
+  --strength 0.75 \
+  photos/
+```
+
+### Build a HaldCLUT
+
+```bash
+python3 scripts/cube-to-hald.py \
+  --dir "$FILMSIM_ROOT/luts" \
+  --out "$FILMSIM_ROOT/hald" \
+  --level 8 \
+  --pre-gain 1.0
+```
+
+Level 8 produces a 512 by 512, 8-bit RGB PNG with 64 samples per channel. The script rejects levels whose per-channel grid exceeds 128. Install or select the resulting PNG using the target host's own CLUT settings.
+
+### Generate approximate Lightroom presets
+
+```bash
+python3 scripts/lut-to-xmp.py \
+  --dir "$FILMSIM_ROOT/luts" \
+  --out "$FILMSIM_ROOT/lr-presets" \
+  --group "Film Simulation" \
+  --pre-gain 1.0
+```
+
+Only filenames present in the script's `TASTE` table are processed. Unknown names are skipped because the script has no fallback grain and vignette recipe. The output is a parameterized preset, not a general 3D-LUT conversion.
+
+### Compare looks on one image
+
+```bash
+python3 scripts/try-looks.py photo.jpg \
+  --lut-dir "$FILMSIM_ROOT/luts" \
+  --out "$FILMSIM_ROOT/contact-sheets" \
+  --only portra ektar \
+  --size 1400 \
+  --cols 3 \
+  --pre-gain 1.0
+```
+
+This writes one JPEG per look and a file named `对比图.jpg`. The preview path converts the input to 8-bit RGB and does not preserve its metadata.
+
+### Acquire and curate sources
+
+List available helper branches before downloading anything:
+
+```bash
+bash scripts/fetch_sources.sh --list
+```
+
+The RawTherapee branch downloads and extracts a large archive:
+
+```bash
+FILMSIM_ROOT=/absolute/path/to/film-work \
+SRC_DIR=/absolute/path/to/downloads \
+bash scripts/fetch_sources.sh rt
+
+python3 scripts/curate-rt-halclut.py \
+  --src /absolute/path/to/downloads/HaldCLUT \
+  --dst "$FILMSIM_ROOT/luts/rt"
+```
+
+Use `--list` on the curation command to count matched curated entries without copying. `--all` copies all PNGs it finds and derives output names from source paths. Review [`references/sources.md`](references/sources.md) and [`references/sourcing-playbook.md`](references/sourcing-playbook.md) before redistributing downloaded or derived files.
+
+### Bake LUTs with `spectral_film_lut`
+
+Run this with an interpreter where the optional package is already installed:
+
+```bash
+python3 scripts/bake-spectral-luts.py --list
+python3 scripts/bake-spectral-luts.py \
+  --out "$FILMSIM_ROOT/luts/spectral" \
+  --size 33 \
+  --only velvia trix
+```
+
+The script writes sRGB-input, Rec. 709-output `.cube` files through the upstream library. Its `--noise` flag is currently parsed but unused.
+
+### Remove installed creative profiles
+
+Removal uses the source directory as a filename manifest. It deletes same-named files from the destination and leaves every other file alone.
+
+```bash
+python3 scripts/install_ccprofiles.py remove \
+  --src "$FILMSIM_ROOT/lr-ccprofiles"
+```
+
+If the source XMP files are no longer present, the installer has no record of what to remove.
+
+## Script reference
+
+| Entry point | Input and output | Key options | Side effects and validation |
+|---|---|---|---|
+| `scripts/lut-to-ccprofile.py` | Top-level `.cube`, `.png`, or `.tif` LUTs to profile XMP plus wrapper XMP | `--dir`, `--out`, `--only`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--allow-unknown`, `--group`, `--protect` | Creates the output directory and overwrites same-named XMP files. Internally decodes each encoded table and requires less than one 16-bit LSB error. Does not test an Adobe host. |
+| `scripts/calibrate-luts.py` | Top-level LUT files to JSON | `--mode`, `--protect`, `--merge`, `--out` | Writes JSON. Bisection assumes score is monotonic over gain 0.10 to 4.0 and does not check bracketing. `--merge` preserves unrelated existing records. |
+| `scripts/lr-filmsim.py` | `.cube` or HaldCLUT plus images to processed images | `--out`, `--suffix`, `--strength`, `--linear-pipeline`, `--pre-gain`, `--info` | Default is destructive in-place replacement with no backup. Uses an atomic temporary-file replace. Argument ranges are not enforced. |
+| `scripts/cube-to-hald.py` | Top-level `.cube` files to HaldCLUT PNG | `--level`, `--pre-gain`, `--only`, `--out` | Creates output directory and overwrites same-named PNGs. No round-trip comparison is performed. |
+| `scripts/lut-to-xmp.py` | Known top-level `.cube` files to approximate preset XMP | `--group`, `--only`, `--pre-gain`, `--out` | Creates or overwrites XMP files. Unknown stems are skipped. No XML parse or Adobe-host test is performed. |
+| `scripts/qa-luts.py` | Top-level `.cube` and `.png` LUTs to a console report | `--dir`, `--only` | Read-only. Samples a fixed grayscale probe and reports a binary heuristic based on black-to-white contrast and white level. |
+| `scripts/try-looks.py` | One Pillow-readable image plus top-level `.cube` or `.png` LUTs to JPEG previews and a sheet | `--lut-dir`, `--only`, `--out`, `--size`, `--cols`, `--strength`, `--linear-pipeline`, `--pre-gain` | Creates output files and overwrites colliding names. This is visual-review material, not numeric QA. |
+| `scripts/install_ccprofiles.py` | Source XMP directory to Adobe settings directory | `list`, `install`, `remove`, `--src`, `--dest`, `--dry-run` | Install overwrites same-named destination files without backup. Remove unlinks same-named destination files. DCP files are not changed. |
+| `scripts/install-lr-ccprofiles.sh` | POSIX wrapper around the installer | `--list`, `--remove`; other arguments pass through after the first argument | Same side effects as the Python installer. Defaults to install. |
+| `scripts/apply-look.sh` | Fuzzy LUT name plus files or directories to direct processing | `--ls`, `--out`, `--strength`, `--suffix`, `--linear-pipeline`, `--pre-gain`, `--flat` | May overwrite images because it delegates to `lr-filmsim.py`. Directory search is one level deep. Requires common POSIX tools. |
+| `scripts/fetch_sources.sh` | Named upstream source to downloads or tool installation | `--list`, `rt`, `spectra`, `fuji`, `spektra` | Uses network access. May download hundreds of megabytes, extract with overwrite, create virtual environments, clone repositories, or install tools. |
+| `scripts/curate-rt-halclut.py` | RawTherapee HaldCLUT tree to copied PNG subset | `--src`, `--dst`, `--all`, `--list` | Creates the destination even in `--list` mode and overwrites colliding copied files. It does not run LUT QA. |
+| `scripts/bake-spectral-luts.py` | Built-in spectral film jobs to `.cube` files | `--out`, `--size`, `--only`, `--list`, `--noise` | Imports and executes third-party `spectral_film_lut`; writes in the output directory. `--noise` has no effect. |
+| `scripts/selftest.py` | Generated synthetic LUT to temporary calibration and XMP artifacts | `--work` | Without `--work`, removes its temporary directory after success. Checks table MD5 convention, encode/decode error, midpoint, and protected white. |
+| `scripts/selftest.sh` | POSIX wrapper for `scripts/selftest.py` | Arguments pass through | Same validation as the Python self-test. |
+| `evals/make_fixtures.py` | Synthetic generator to committed-style fixture tree | `--out`, `--verify-reproducible` | Writes or overwrites fixtures. Checks defect signatures; reproducibility mode compares two generated trees. |
+| `evals/grade.py` | An external evaluation run directory to console or JSON grading | `--eval`, `--fixtures`, `--no-fixtures`, `--json` | Read-only unless `--json` is given. Decodes candidate profiles and checks declared evaluation artifacts; it is not a general delivery verifier. |
+| `evals/assemble_review.sh` | Evaluation run directories to a review directory and optional HTML | Optional workspace argument | Copies evaluation artifacts and may invoke an external skill-review generator. Uses `VIEWER` and `VIEWER_PY` when set. |
+
+## How the conversion works
+
+### LUT parsing and application
+
+The shared implementation lives in `scripts/lr-filmsim.py`.
+
+- The `.cube` parser reads `LUT_3D_SIZE`, optional `LUT_1D_SIZE`, and `DOMAIN_MIN` or `DOMAIN_MAX`.
+- A complete 1D shaper is linearly interpolated before the 3D lookup. An incomplete shaper is ignored.
+- The 3D lookup clips normalized coordinates to 0 through 1 and performs trilinear interpolation over eight neighboring samples.
+- HaldCLUT dimensions are inferred from the square image's pixel count. Very large inferred grids are subsampled before use.
+- `pre_gain` decodes sRGB values to linear light, multiplies them, and encodes them back before the LUT.
+- `strength` linearly mixes the LUT result with the unmodified input block. The CLI does not clamp the supplied strength value.
+
+### Calibration and highlight protection
+
+`calibrate-luts.py` samples 19 neutral values. It bisects a gain range of 0.10 through 4.0 for 40 iterations. `midgray` targets the sampled value nearest 0.5; `brightness` targets a weighted average over the neutral ramp.
+
+When `--protect` is greater than zero, calibration and Adobe table generation blend high-luminance LUT output back toward the input with a smoothstep transition. The threshold is not automatically selected. Pass the same value to both commands.
+
+### Adobe RGBTable encoding
+
+`lut-to-ccprofile.py` resamples the input LUT to a cubic table, quantizes each channel to 16 bits, and delta-encodes samples against a neutral ramp. It then serializes the table and its space metadata, compresses it with zlib, and encodes it with Adobe's custom base85 alphabet for an XMP attribute. The uppercase MD5 of the uncompressed table is used as the table ID.
+
+For `display`, the sampled LUT receives display-encoded values. For `linear`, the encoder converts table inputs to sRGB before applying the source LUT and converts results back to linear. Space metadata and the named base profile must stay paired as shown in the requirements table.
+
+The encoder emits one creative-profile XMP and one normal preset that references the profile UUID. These are generated files, not proof that an Adobe host accepted the profile.
+
+## Configuration and environment variables
+
+| Variable | Used by | Behavior |
+|---|---|---|
+| `FILMSIM_ROOT` | Most conversion, curation, fetch, wrapper, and installer scripts | Sets the working root. When unset, scripts use the current working directory. Several scripts look for `数据/luts` before `luts`. Explicit `--dir`, `--out`, `--src`, and `--dst` arguments are safer for reusable workflows. |
+| `LR_SETTINGS_DIR` | `scripts/install_ccprofiles.py` | Overrides the Adobe CameraRaw `Settings` destination. |
+| `XDG_CONFIG_HOME` | `scripts/install_ccprofiles.py` | On non-macOS, non-Windows systems, forms the default Adobe settings path. If unset, the script uses `~/.config`. |
+| `APPDATA` | `scripts/install_ccprofiles.py` | On Windows, forms the default Adobe settings path. If unset, the script uses `~/AppData/Roaming`. |
+| `SRC_DIR` | `scripts/fetch_sources.sh` | Overrides the source download and environment directory. If unset, the script uses `$FILMSIM_ROOT/sources`, or `$PWD/sources` when `FILMSIM_ROOT` is unset. |
+| `PRE_GAIN` | `scripts/apply-look.sh` | Sets that wrapper's pre-gain. If unset, the wrapper uses `0.3472`. This is a wrapper default, not a universal value for arbitrary LUTs. |
+| `VIEWER` | `evals/assemble_review.sh` | Explicit path to an external `generate_review.py`. If unset, the script probes three user-level skill locations. |
+| `VIEWER_PY` | `evals/assemble_review.sh` | Preferred Python interpreter for the external viewer. It must be Python 3.10 or newer. |
+
+Some default paths still retain the older `数据` layout. In particular, the default calibration output and curation source or destination are not consistently aligned with the newer `luts`, `sources`, and `lr-ccprofiles` layout. Use explicit paths in automation.
+
+## Testing and verification
+
+Run the local synthetic test:
+
+```bash
 python3 scripts/selftest.py
 ```
 
-English walkthrough: [`references/README.en.md`](references/README.en.md).
+The self-test creates a synthetic 17-cube LUT, calibrates it, builds a display-space creative profile with highlight protection, decodes the embedded table, checks its MD5-derived ID and quantization error, and asserts midpoint and white response. It does not open Lightroom, Camera Raw, Photoshop, ART, RawTherapee, or Resolve.
 
-## Repo layout
+The [CI workflow](.github/workflows/ci.yml) runs on Ubuntu, macOS, and Windows with Python 3.9 and 3.12. It:
 
-```
-SKILL.md                  # the skill itself (frontmatter + decision tree + SOP)
-scripts/                  # 15 CLI tools: encode, calibrate, convert, install, QA, selftest
-references/               # 8 deep-dive docs (format, pitfalls, calibration, hosts, sources…)
-assets/                   # calibration.example.json
-evals/                    # 3 eval tasks + grader + fixtures + trigger queries
-```
+1. installs `requirements.txt`;
+2. parses every Python entry point with `ast`;
+3. runs `scripts/selftest.py`;
+4. regenerates synthetic fixtures and checks their defect signatures;
+5. verifies that fixture generation is byte-reproducible.
 
-| Script | Purpose |
-|---|---|
-| `lut-to-ccprofile.py` | **main encoder** — `.cube` → Adobe creative profile (XMP + embedded RGBTable, base85 + zlib, delta-encoded samples) |
-| `calibrate-luts.py` | per-LUT exposure solve (bisection, `midgray` or `brightness` mode) |
-| `install_ccprofiles.py` | cross-platform install of profiles/presets into CameraRaw |
-| `lr-filmsim.py` | apply a look directly to images (`.cube` + HaldCLUT, TIFF16 in/out) |
-| `cube-to-hald.py` | `.cube` → HaldCLUT PNG for ART / RawTherapee |
-| `lut-to-xmp.py` | curve-only fallback preset (retains ~80 %; use when a DCP is unavailable) |
-| `qa-luts.py` | table quality report (monotonicity, clipping, range, identity deviation) |
-| `selftest.py` | end-to-end self-test of the encoder/decoder round trip |
-| `bake-spectral-luts.py`, `curate-rt-halclut.py`, `fetch_sources.sh` | bake spectral simulations, curate RT HaldCLUTs, fetch sources |
+CI does not test third-party downloads, spectral baking, shell wrappers on native Windows, or integration with any photo or video host.
 
-## Host / OS / camera coverage
+`evals/grade.py` is narrower than a full verifier. For its delivery evaluation, it independently decodes an embedded RGBTable, recomputes its MD5, reads metadata and base-profile fields, evaluates grayscale response, and checks wrapper UUID matching. It compares recomputed grayscale, midpoint, and white values with declarations where implemented. It accepts declared `decode_error_lsb`, brightness ratio, and image-level highlight metrics against thresholds; it does not independently recompute all of those metrics from source images. No production command automatically creates `verification.json`.
 
-See [`references/hosts.md`](references/hosts.md) for the full matrix and an honest
-"not covered" list. Short version:
+[`references/verification-schema.md`](references/verification-schema.md) describes the evaluation artifact expected by the grader. Treat it as a manual or external evaluation contract, not output promised by the encoder.
 
-- **Lightroom Classic / Camera Raw** → creative profiles (this pipeline).
-- **ART / RawTherapee** → HaldCLUT PNG (`scripts/cube-to-hald.py`).
-- **Photoshop / Resolve / any node pipeline** → hand over the `.cube` directly, or batch-process with `scripts/lr-filmsim.py`.
-- **macOS / Windows / Linux** → all Python entry points work everywhere; `*.sh` are POSIX wrappers (on native Windows call the `.py` entry points).
-- **Cameras** → nothing is camera-specific except that the base profile (`Adobe Standard` for `display`, `Adobe Standard Linear` for `linear`) must exist for your body. Profiles are generated with `crs:CameraModelRestriction` empty, so they are not tied to a model.
+## Limitations and destructive operations
 
-## Verification is a product, not a claim
+Read these before processing original files or installing profiles.
 
-Deliveries ship a `verification.json`
-([schema](references/verification-schema.md)) with decodable evidence: the
-embedded table's gray-scale response, per-pixel highlight statistics, and the
-exact parameters used. `evals/grade.py` reads **only artifacts**, independently
-re-decodes the table and recomputes the numbers, then compares them with what was
-declared — so "I verified it" without real numbers does not pass.
+- `lr-filmsim.py` overwrites input files by default and makes no backup. Pass `--out` for non-destructive processing.
+- The profile installer overwrites same-named destination XMP files without backup. Removal deletes same-named destination files based on the current source directory.
+- TIFF writes do not preserve TIFF metadata. Pillow-based writes preserve an ICC profile when one was present, but do not preserve general EXIF or other image metadata.
+- Image processing keeps only the first three channels. Alpha and extra channels are discarded. Grayscale input is expanded to RGB, processed, and reduced to the red channel rather than luminance.
+- The image tools assume normalized RGB values and do not perform ICC color conversion. Results depend on the encoded values presented to them.
+- Generated XMP interpolates filenames, labels, descriptions, and group names directly into XML. XML-sensitive characters such as `&`, `<`, or quotes are not escaped.
+- `lut-to-ccprofile.py` skips unknown stems unless `--allow-unknown` is supplied. It may exit zero after generating no profiles when all discovered files were skipped.
+- The profile's group follows `--group`, but the wrapper preset group is currently hard-coded to `胶片模拟 (光谱 LUT)`. Custom groups can therefore differ between the pair.
+- Calibration JSON records `mode` and `protect`, but the encoder only consumes `pre_gain`; it does not enforce matching settings.
+- `--base-profile` can name a custom profile, but `--base-digest` is only used when `--base-profile` is also supplied. The script does not verify either value against installed DCP files.
+- `--protect`, `--strength`, `--pre-gain`, `--divisions`, and several size values lack complete range validation. Bad values can produce invalid output, extreme output, or runtime failures.
+- HaldCLUT TIFF input is accepted by some core paths, while QA and contact-sheet discovery only include `.cube` and `.png`. Format coverage is not identical across scripts.
+- `scripts/bake-spectral-luts.py --noise` is currently unused.
+- The repository includes host guidance in [`references/hosts.md`](references/hosts.md), but that document is not a substitute for testing the exact host version, operating system, camera, and base profile you plan to ship.
 
-## Evals
+## Safety and privacy
 
-Three tasks — deliver a look, diagnose a space mismatch, diagnose missing
-highlight protection — graded by artifacts, not by prose. Fixtures are
-**synthetic** (a generated `portra_like.cube` plus two deliberately broken
-profiles) and ship in `evals/fixtures/`:
+Normal LUT conversion, calibration, direct image processing, fixture generation, grading, and self-tests run locally. They do not upload images or call remote services.
 
-```bash
-python3 evals/make_fixtures.py                 # regenerate fixtures
-python3 evals/grade.py <run_dir> --eval 2      # grades against evals/fixtures by default
+`scripts/fetch_sources.sh` is different. Its `rt`, `fuji`, `spectra`, and `spektra` branches contact third-party services and may download archives, clone repositories, or install software. Review the script and upstream licenses first. The RawTherapee archive is described by the helper as roughly 402 MB before extraction.
+
+## Repository layout
+
+```text
+SKILL.md                  Agent Skill instructions
+scripts/                  conversion, calibration, application, install, and source helpers
+references/               format notes, host notes, source records, and evaluation schema
+assets/                   example calibration JSON
+evals/                    synthetic fixtures, fixture generator, grader, and review helper
+.github/workflows/ci.yml  cross-platform synthetic CI
+requirements.txt          minimum Python dependency versions
+LICENSE                   repository code license
 ```
 
-Reported measurements from the skill's own test rounds (with-skill vs hard-isolated
-baseline):
+Further documentation:
 
-| Measurement | with-skill | baseline |
-|---|---|---|
-| Diagnose "missing highlight protection" (task C) | **9/9** | 4/10 |
-| Diagnose "space mismatch" (task B) | **5/5** | 4/5 |
-| Trigger accuracy, 20 mixed queries | recall **10/10**; 19/20 overall → after description fix, spot-check 5/5 | — |
+- [`references/rgb-table-format.md`](references/rgb-table-format.md) explains the Adobe table layout.
+- [`references/calibration.md`](references/calibration.md) discusses the intended calibration and highlight-protection model.
+- [`references/hosts.md`](references/hosts.md) records host assumptions and untested cases.
+- [`references/sources.md`](references/sources.md) records upstream source and license notes.
+- [`references/sourcing-playbook.md`](references/sourcing-playbook.md) gives a source-review workflow.
+- [`references/pitfalls.md`](references/pitfalls.md) collects known failure modes. Some older claims in deeper documents may be stronger than current automated coverage; source code and this README define the implemented behavior.
 
-The grader deliberately is not a prose checker: it re-decodes the RGBTable from
-the produced XMP and re-runs the arithmetic, and it records a hard `0` with a
-reason when a candidate's table cannot be decoded at all (that happened to one
-baseline, which emitted a payload that is not a valid Adobe table).
+## License
 
-## Licence
+Repository code and documentation are licensed under the [MIT License](LICENSE).
 
-MIT — see [`LICENSE`](LICENSE). This repo bundles **no LUT data**; all fixtures
-are synthetic and generated by `evals/make_fixtures.py`. The open LUT libraries
-listed in [`references/sources.md`](references/sources.md) keep their own licences
-(MIT / CC BY-SA 4.0 / GPLv3 / …) — check them before redistributing anything you
-bake with this tooling.
-
----
-
-## 中文说明
-
-**把胶片外观交付进真实修图工作流**的 Agent Skill：
-`LUT → 曝光标定 → 目标格式 → 安装 → 验收`。
-
-通用的 Skill 格式（`SKILL.md` + `scripts/` + `references/`），不依赖任何特定宿主；
-Claude Code / Codex / DSH 都能装，也可以纯粹当命令行工具用。
-
-**它解决的问题**（都是实际踩出来的）：
-
-1. **Lightroom 根本不支持 .cube / HaldCLUT** —— 必须做成 Adobe 创意配置文件（XMP 内嵌 RGBTable），
-   这条没有别的入口。编码器 `scripts/lut-to-ccprofile.py` 负责把 `.cube` 烘成可用的 XMP。
-2. **套上就发灰** —— 九成是「表所在色彩空间 ↔ 元数据 ↔ 基底配置文件」三者对不上：
-   `display` 配 `Adobe Standard` + `(1,3,0,0.0,1.0)`，`linear` 配 `Adobe Standard Linear` + `(3,1,0,1.0,1.0)`，
-   错配会让宿主多（或少）做一次 gamma。
-3. **偏亮/偏暗** —— 每个卷的曝光定位都不同，实测需要 0.40–1.67 的增益跨度，
-   必须逐卷标定（`scripts/calibrate-luts.py`，二分求根）。
-4. **高光被切平** —— 胶片印片肩部会把纯白压到 ~209，高光细节标准差从 6.10 掉到 1.02；
-   用 `--protect 0.68` 把高光按权重混回原图（0.986 / 247.1 / 细节 5.06）。
-
-**怎么用**：先把仓库 clone 成技能目录（见上面的 Install），
-然后直接用自然语言说「把 `$FILMSIM_ROOT/luts` 里的卷做成 Lightroom 创意配置文件」，
-或「我套上胶片配置后发灰、偏暗，帮我看」。
-中文细节全在 `SKILL.md` 与 `references/`，脚本也可以脱离 agent 单独跑（Quick start 步骤 1–5）。
-
-**验收不是口头承诺**：交付必须带 `verification.json`（内含可解码的实测数据），
-`evals/grade.py` 只读产物、独立解码表并重算数字——没有真实数字的"我验证过了"过不了评测。
-
-**许可证**：本仓库 MIT。**不打包任何 LUT 数据**，评测样本是 `evals/make_fixtures.py`
-生成的合成样本；`references/sources.md` 里列的开源 LUT 库各自保留其许可证。
+No third-party LUT collection is bundled. The repository does include the synthetic test LUT at [`evals/fixtures/luts/portra_like.cube`](evals/fixtures/luts/portra_like.cube) and generated synthetic bad-profile fixtures under [`evals/fixtures/bad/`](evals/fixtures/bad/). Files, datasets, profiles, archives, packages, and tools fetched from third parties retain their own licenses and terms. Check those terms before use or redistribution.
