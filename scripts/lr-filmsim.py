@@ -19,6 +19,16 @@ lr-filmsim.py — 给 Lightroom 工作流用的胶片模拟 LUT 施加器
 
 from __future__ import annotations
 
+# Windows 上输出被重定向时控制台默认用 cp1252，打印中文/符号会 UnicodeEncodeError。
+# 这里把 stdout/stderr 固定成 UTF-8；任何失败都静默跳过，不影响其他平台。
+import sys as _sys
+for _s in (_sys.stdout, _sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+del _sys
+
 import argparse
 import os
 import sys

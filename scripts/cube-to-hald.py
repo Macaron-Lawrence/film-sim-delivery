@@ -17,6 +17,16 @@ Hald level 8 = 每通道 64 级、512×512 像素；我们用三线性从原 LUT
 
 from __future__ import annotations
 
+# Windows 上输出被重定向时控制台默认用 cp1252，打印中文/符号会 UnicodeEncodeError。
+# 这里把 stdout/stderr 固定成 UTF-8；任何失败都静默跳过，不影响其他平台。
+import sys as _sys
+for _s in (_sys.stdout, _sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+del _sys
+
 import argparse
 import glob
 import importlib.util

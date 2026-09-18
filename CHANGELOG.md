@@ -2,6 +2,26 @@
 
 All notable changes to `film-sim-delivery`.
 
+## [0.3.1]
+
+- **Windows fix.** Every Python entry point died with
+  `UnicodeEncodeError: 'charmap' codec can't encode character` whenever stdout was
+  redirected — CI captures output as a pipe, so a Windows console falls back to
+  cp1252 and cannot encode `✓` or the Chinese status text. Each script now pins
+  `sys.stdout` / `sys.stderr` to UTF-8 at import time (guarded, no-op elsewhere),
+  and CI sets `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8` as a second layer.
+  Reproduction: `PYTHONIOENCODING=cp1252 python3 scripts/selftest.py` — exited 1
+  before, exits 0 now.
+- **Fixtures are byte-reproducible.** `evals/make_fixtures.py` no longer uses
+  `uuid4()` for profile IDs (derived from the table ID instead), so regenerating
+  produces identical bytes. Added `--verify-reproducible`, which generates twice
+  into temp dirs and compares tree hashes; CI runs it on all three platforms.
+- **CI matrix** covers Ubuntu / macOS / Windows × Python 3.9 / 3.12. All six cells
+  green.
+- `LICENSE` is plain MIT text again so GitHub detects the licence (a trailing
+  provenance note had made it report `NOASSERTION`); that note lives in the
+  README's Licence section.
+
 ## [0.3.0] — first public release
 
 Initial open-source release of the skill. Pipeline: `LUT → calibration → target
