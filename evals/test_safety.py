@@ -77,17 +77,41 @@ def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="filmsim-safety-"))
     luts = work / "luts"
     luts.mkdir()
-    # 任意客户风格文件名，其中一个含 XML 特殊字符
-    for nm in ["Client Look 01", "Warm & Soft", "Client <Final>", "O'Brien Look"]:
-        make_lut(luts / f"{nm}.cube", nm)
+    # 客户风格文件名 + XML 特殊字符。注意 `<` `>` 是 Windows 文件名的保留字符，
+    # 在那边根本建不出这种文件——所以按平台取集合，转义逻辑由下面的单元断言覆盖全字符集。
+    xml_names = ["Client Look 01", "Warm & Soft", "O'Brien Look"]
+    if os.name != "nt":
+        xml_names.append("Client <Final>")
+    created = []
+    for nm in xml_names:
+        try:
+            make_lut(luts / f"{nm}.cube", nm)
+            created.append(nm)
+        except OSError as exc:            # pragma: no cover - 仅 Windows 触发
+            print(f"    （本平台无法创建文件名 {nm!r}：{exc}）")
+    expect = len(created) * 2
+
+    # ── 0. 转义逻辑本身：五个 XML 特殊字符都要覆盖（跨平台都能测）──────
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location("ccx", SCRIPTS / "lut-to-ccprofile.py")
+    _ccx = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_ccx)
+    esc_ok = (_ccx.xesc("Warm & Soft") == "Warm &amp; Soft"
+              and _ccx.xesc("Client <Final>") == "Client &lt;Final&gt;"
+              and _ccx.xattr('a&b<c>d"e') == "a&amp;b&lt;c&gt;d&quot;e"
+              # 单引号**必须原样保留**：Adobe base85 字母表里有 `'`
+              and _ccx.xattr("O'Brien") == "O'Brien")
+    check("XML 转义：& < > 与双引号都转义、单引号保留（base85 字母表含单引号）", esc_ok,
+          f"xesc/xattr 结果：{_ccx.xesc('Warm & Soft')!r} / {_ccx.xattr(chr(39))!r}")
 
     # ── 1. 任意文件名默认处理（不再需要 --allow-unknown）────────────────
     out1 = work / "o1"
     r = run(SCRIPTS / "lut-to-ccprofile.py", "--dir", luts, "--out", out1,
             "--space", "display", "--pre-gain", "1.0")
     made = sorted(out1.glob("*.xmp")) if out1.is_dir() else []
-    check("任意文件名默认可处理（4 个全部生成）", r.returncode == 0 and len(made) == 8,
-          f"退出码={r.returncode} 产物={len(made)}（期望 8：4 卷 × profile+wrapper）")
+    check(f"任意文件名默认可处理（{len(created)} 个全部生成）",
+          r.returncode == 0 and len(made) == expect,
+          f"退出码={r.returncode} 产物={len(made)}（期望 {expect}：{len(created)} 卷 × profile+wrapper）")
 
     # ── 2. 特殊字符不破坏 XML，表数据完整 ──────────────────────────────
     import importlib.util
