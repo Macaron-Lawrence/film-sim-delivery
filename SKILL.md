@@ -165,7 +165,7 @@ scripts/
 
 references/：`sources.md`（来源表）· `sourcing-playbook.md`（调研流程）·
 `rgb-table-format.md`（二进制格式规范）· `pitfalls.md`（7 条硬坑）· `calibration.md`（标定与护高光原理）·
-`hosts.md`（宿主/系统/相机适配矩阵）· `verification-schema.md`（交付凭证格式）· `README.en.md`（英文速查）
+`hosts.md`（宿主/系统/相机适配矩阵）· `verification-schema.md`（交付凭证格式）
 
 ## 8. 跨平台说明
 
@@ -187,7 +187,7 @@ references/：`sources.md`（来源表）· `sourcing-playbook.md`（调研流�
 | **操作系统** | macOS / Windows / Linux 全通；Adobe 目录自动判定 + `LR_SETTINGS_DIR` 覆盖；原生 Windows 用 `.py` 入口（`.sh` 只是 POSIX 包装） |
 | **相机** | 脚本里**没有任何机型或安装路径假设**，profile 的 `crs:CameraModelRestriction` 留空 → 不绑定机型。唯一依赖：基础配置文件 `Adobe Standard`（display 族）或 `Adobe Standard Linear`（linear 族）要存在于本机 `CameraProfiles/` |
 | **AI / agent 宿主** | 标准 Agent Skills 格式，复制文件夹即可用于 Claude Code / Codex / Cursor 等；**不依赖任何宿主专有 API** |
-| **语言** | 正文中文；英文速查见 `references/README.en.md` |
+| **语言** | 正文中文；完整英文说明见仓库根目录 `README.md`（中文版 `README.zh.md`），二者与源码不一致时以源码为准 |
 
 取素材与许可见 `references/sources.md`（本 skill 不打包任何 LUT 数据）；调研新来源的流程见
 `references/sourcing-playbook.md`。

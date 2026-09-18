@@ -14,6 +14,13 @@ All notable changes to `film-sim-delivery`.
 - **Added [`README.zh.md`](README.zh.md)** — a complete Chinese translation of the
   README, linked from the top of both files. Same structure, same tables, same
   caveats; only the prose is translated, so commands and paths stay identical.
+- **Removed `references/README.en.md`.** It was an English quick start written
+  before the root README existed, and it had become a second, weaker source of
+  truth: it still asserted the highlight-cap figure and per-LUT gain range that
+  the rewritten README no longer claims, and it duplicated the README's structure
+  without being maintained alongside it. The root [`README.md`](README.md) is now
+  the complete English reference; `SKILL.md` points there (`references/` is down
+  to 7 files).
 - Verified from a clean state over HTTPS: clone → `python3 -m venv` →
   `pip install -r requirements.txt` → `scripts/selftest.py` passes, and
   `evals/make_fixtures.py --verify-reproducible` yields the same tree hash as CI
