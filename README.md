@@ -28,6 +28,25 @@ brightness ratio 0.915 / top-5 % 207.6 / 0 % of pixels ≥ 250 / highlight-detai
 std 1.02; with protection, 0.986 / 247.1 / 3.31 % / 5.06 — against 1.000 / 248.1
 / 4.27 % / 6.10 for the untreated original.
 
+## Install
+
+The repository root **is** the skill, so cloning it into a skills directory is all
+it takes:
+
+```bash
+# use your host's skills path (Claude Code ≈ ~/.claude/skills, DSH ≈ ~/.dsh/skills, …)
+git clone https://github.com/Macaron-Lawrence/film-sim-delivery.git \
+          ~/.claude/skills/film-sim-delivery
+```
+
+Then just talk to the agent — 「把 `$FILMSIM_ROOT/luts` 里的卷做成 Lightroom 创意配置文件」,
+or 「我套上胶片配置后发灰、偏暗，帮我看」. Nothing else to register: the host reads
+`SKILL.md` (`name` + `description`) and pulls in `references/` and `scripts/` only
+when the task needs them.
+
+Prefer a plain CLI? The scripts run standalone — see Quick start below. Nothing in
+this repo calls a host-specific API.
+
 ## Quick start
 
 ```bash
@@ -155,9 +174,10 @@ Claude Code / Codex / DSH 都能装，也可以纯粹当命令行工具用。
 4. **高光被切平** —— 胶片印片肩部会把纯白压到 ~209，高光细节标准差从 6.10 掉到 1.02；
    用 `--protect 0.68` 把高光按权重混回原图（0.986 / 247.1 / 细节 5.06）。
 
-**怎么用**：见上面的 Quick start（步骤 1–5），中文细节全在 `SKILL.md` 与 `references/`。
-提示词可以直接说：「把 `$FILMSIM_ROOT/luts` 里的卷做成 Lightroom 创意配置文件」，
+**怎么用**：先把仓库 clone 成技能目录（见上面的 Install），
+然后直接用自然语言说「把 `$FILMSIM_ROOT/luts` 里的卷做成 Lightroom 创意配置文件」，
 或「我套上胶片配置后发灰、偏暗，帮我看」。
+中文细节全在 `SKILL.md` 与 `references/`，脚本也可以脱离 agent 单独跑（Quick start 步骤 1–5）。
 
 **验收不是口头承诺**：交付必须带 `verification.json`（内含可解码的实测数据），
 `evals/grade.py` 只读产物、独立解码表并重算数字——没有真实数字的"我验证过了"过不了评测。

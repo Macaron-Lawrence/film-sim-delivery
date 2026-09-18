@@ -2,6 +2,16 @@
 
 All notable changes to `film-sim-delivery`.
 
+## [Unreleased]
+
+- **README: added an Install section.** The repo root *is* the skill, so
+  `git clone` into a skills directory is the whole install — that was implied but
+  never written down. Verified end to end from a clean state: HTTPS clone →
+  `python3 -m venv` → `pip install -r requirements.txt` → `scripts/selftest.py`
+  passes, and `evals/make_fixtures.py --verify-reproducible` yields the same tree
+  hash as CI (`a83a297b51f8cee3`) on Python 3.9.6 and 3.13.15 alike.
+- 中文说明同样改为先指向 Install 步骤，不再默认目录已经在位。
+
 ## [0.3.1]
 
 - **Windows fix.** Every Python entry point died with
