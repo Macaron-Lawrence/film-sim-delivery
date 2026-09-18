@@ -16,8 +16,12 @@ All notable changes to `film-sim-delivery`.
   `uuid4()` for profile IDs (derived from the table ID instead), so regenerating
   produces identical bytes. Added `--verify-reproducible`, which generates twice
   into temp dirs and compares tree hashes; CI runs it on all three platforms.
-- **CI matrix** covers Ubuntu / macOS / Windows × Python 3.9 / 3.12. All six cells
-  green.
+- **Python 3.9 fix.** `evals/make_fixtures.py` called
+  `Path.write_text(..., newline="\n")`, a keyword that only exists from 3.10, so
+  every 3.9 cell failed with `TypeError: write_text() got an unexpected keyword
+  argument 'newline'`. Replaced by a `write_lf()` helper. The main pipeline was
+  unaffected — `selftest.py` already passed on 3.9.
+- **CI matrix** covers Ubuntu / macOS / Windows × Python 3.9 / 3.12, all six green.
 - `LICENSE` is plain MIT text again so GitHub detects the licence (a trailing
   provenance note had made it report `NOASSERTION`); that note lives in the
   README's Licence section.

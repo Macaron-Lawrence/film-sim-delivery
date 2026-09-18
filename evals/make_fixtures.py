@@ -74,6 +74,13 @@ def stable_uuid(*parts: str) -> str:
     return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest().upper()
 
 
+def write_lf(path: Path, text: str) -> None:
+    """按 LF 写文件。注意不能用 Path.write_text(newline=...)：那是 Python 3.10+ 才有的参数，
+    在 3.9 上直接 TypeError（CI 的 3.9 格子就是这么红的）。"""
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
 def white_and_mid(cc, path: Path):
     """独立解回一个 XMP：返回 (中灰, 纯白) 的 0-255 响应。"""
     s = path.read_text(encoding="utf-8")
@@ -109,22 +116,20 @@ def generate(out: Path, quiet: bool = False) -> dict:
     colors = cc.build_table(lut_path, 32, "display", float(gain), 0.0)
     blob = cc.encode_table(colors, 32, cc.META["display"])
     tid = cc.table_id(blob)
-    (out / "bad" / "portra_noprotect.xmp").write_text(
-        cc.look_xmp("Synthetic (no highlight protection)", tid, cc.b85_encode(blob),
-                    "Adobe Standard", "", stable_uuid("noprotect", tid),
-                    "评测样本：空间/元数据正确，但表格未做护高光"),
-        encoding="utf-8", newline="\n")
+    write_lf(out / "bad" / "portra_noprotect.xmp",
+             cc.look_xmp("Synthetic (no highlight protection)", tid, cc.b85_encode(blob),
+                         "Adobe Standard", "", stable_uuid("noprotect", tid),
+                         "评测样本：空间/元数据正确，但表格未做护高光"))
     say(f"✓ {out/'bad/portra_noprotect.xmp'}")
 
     # ③ 坏样本 B：空间错配（线性域的表 + 显示域的元数据声明）
     colors = cc.build_table(lut_path, 32, "linear", 0.3472, 0.0)
     blob = cc.encode_table(colors, 32, cc.META["display"])          # ← 故意配错
     tid = cc.table_id(blob)
-    (out / "bad" / "portra_spacemismatch.xmp").write_text(
-        cc.look_xmp("Synthetic (space mismatch)", tid, cc.b85_encode(blob),
-                    "Adobe Standard", "", stable_uuid("mismatch", tid),
-                    "评测样本：表格按线性族烘制，却按显示域声明"),
-        encoding="utf-8", newline="\n")
+    write_lf(out / "bad" / "portra_spacemismatch.xmp",
+             cc.look_xmp("Synthetic (space mismatch)", tid, cc.b85_encode(blob),
+                         "Adobe Standard", "", stable_uuid("mismatch", tid),
+                         "评测样本：表格按线性族烘制，却按显示域声明"))
     say(f"✓ {out/'bad/portra_spacemismatch.xmp'}")
 
     # ④ 签名：两个坏样本必须可区分，且落在预期区间

@@ -2,6 +2,8 @@ name: ci
 
 on:
   push:
+    branches: ["**"]      # 分支推送触发；tag 不触发（tag 只是发布标记，不必再跑一遍）
+    tags-ignore: ["**"]
   pull_request:
   workflow_dispatch:
 
