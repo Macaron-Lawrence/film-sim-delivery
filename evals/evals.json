@@ -1,0 +1,58 @@
+{
+  "skill_name": "film-sim-delivery",
+  "version": 2,
+  "grading": "只读产物：verification.json / diagnosis.json + 独立重算（不再用关键词匹配报告文本）",
+  "evals": [
+    {
+      "id": 0,
+      "eval_name": "deliver-cube-to-lightroom",
+      "prompt": "把 <root>/luts/portra_like.cube 做成 Lightroom Classic 能用的东西，重启后能在「配置文件」浏览器里选到；产物放 <run-dir>/，不要写系统目录。",
+      "expected_output": "Adobe 创意配置文件 XMP（内嵌 RGBTable，表 ID = 表内容 MD5）+ wrapper；display 族与 Adobe Standard 配对；护高光生效（纯白 ≥250）；并在交付目录写 verification.json。",
+      "files": ["luts/portra_like.cube"],
+      "assertions": [
+        "交付目录存在 verification.json 且可解析",
+        "profile 内嵌 RGBTable 可独立解码",
+        "outputs.table_id = 表内容 MD5（大写十六进制）",
+        "params.space / base_profile / metadata 三者配对正确",
+        "独立重算的表与声明的 gray_response 一致（每档差 ≤1.5/255）",
+        "checks.mid_gray_out 落在 118–145",
+        "checks.white_out ≥ 250（护高光生效）",
+        "checks.decode_error_lsb ≤ 1.0",
+        "checks.brightness_ratio 落在 0.95–1.05",
+        "checks.top5pct_median ≥ 240 且 checks.pct_ge_250 ≥ 2.5",
+        "checks.highlight_detail_std ≥ 3.5",
+        "wrapper 存在且其 crs:Look UUID = profile 的 crs:UUID"
+      ]
+    },
+    {
+      "id": 1,
+      "eval_name": "diagnose-space-mismatch",
+      "prompt": "Lightroom 里装了 <root>/bad/portra_spacemismatch.xmp，套上后整张发灰、对比低、高光发白。诊断原因、生成修好的配置文件，产物放 <run-dir>/，并写出 diagnosis.json 与 verification.json。",
+      "expected_output": "根因 = 表格空间与元数据/基底声明不匹配（线性域的表被按显示域声明）；diagnosis.json 的 root_cause_code 为 space_metadata_mismatch，并给出两侧比对的数值证据；修复后的配置通过全部交付指标。",
+      "files": ["bad/portra_spacemismatch.xmp", "luts/portra_like.cube"],
+      "assertions": [
+        "存在 diagnosis.json，root_cause_code = space_metadata_mismatch",
+        "evidence 给出与两种族的比对误差（linear ≤1.0 且 display 显著更大）",
+        "存在修好的 profile（与输入样本不同的文件）且可解码",
+        "修复后 metadata/基底配对正确",
+        "修复后 white_out ≥ 250 且 mid_gray_out 落在 118–145",
+        "存在 verification.json 且其 checks 与独立重算一致"
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "diagnose-missing-highlight-protection",
+      "prompt": "Lightroom 里装了 <root>/bad/portra_noprotect.xmp（来源可靠、空间与基底都正常），套上后中灰正常但高光发白、亮部没细节。诊断原因、生成修好的配置文件，产物放 <run-dir>/，并写出 diagnosis.json 与 verification.json。",
+      "expected_output": "根因 = 该表未做护高光（肩部封顶）：纯白只到 ~209–215；diagnosis.json 的 root_cause_code 为 missing_highlight_protection；修复后纯白 ≥250、高光细节恢复。",
+      "files": ["bad/portra_noprotect.xmp", "luts/portra_like.cube"],
+      "assertions": [
+        "存在 diagnosis.json，root_cause_code = missing_highlight_protection",
+        "evidence 给出修复前的纯白输出（≤215）与修复后的纯白（≥250）",
+        "存在修好的 profile 且可解码",
+        "修复后 white_out ≥ 250",
+        "修复后 mid_gray_out 仍在 118–145（不能靠整体提亮来救高光）",
+        "存在 verification.json 且其 checks 与独立重算一致"
+      ]
+    }
+  ]
+}

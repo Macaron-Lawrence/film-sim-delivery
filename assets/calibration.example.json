@@ -1,0 +1,12 @@
+{
+ "_说明": "calibrate-luts.py 的输出格式；pre_gain 逐卷不同，mode/protect 必须与生成时一致",
+ "portra400":   {"pre_gain": 0.3991, "mode": "brightness", "protect": 0.68,
+                 "mid_in": 128, "mid_out_before": 195.3, "mid_out_after": 138.5,
+                 "white_before": 255.0, "white_after": 255.0},
+ "velvia50":    {"pre_gain": 1.2438, "mode": "brightness", "protect": 0.68,
+                 "mid_in": 128, "mid_out_before": 114.9, "mid_out_after": 130.5,
+                 "white_before": 255.0, "white_after": 255.0},
+ "trix400":     {"pre_gain": 0.8009, "mode": "brightness", "protect": 0.68,
+                 "mid_in": 128, "mid_out_before": 145.5, "mid_out_after": 128.0,
+                 "white_before": 255.0, "white_after": 255.0}
+}

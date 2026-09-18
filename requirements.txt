@@ -1,0 +1,5 @@
+# film-sim-delivery 运行依赖（Python 3.9+）
+# 安装：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+numpy>=1.21
+Pillow>=9.0
+tifffile>=2021.11.2

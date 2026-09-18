@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Eval run artifacts (keep evals/fixtures — they are generated but tiny and needed)
+evals/runs/
+evals/review/
+evals/*.pptx
+evals/**/verification.json
+
+# Local working data — LUTs and produced profiles never belong in the repo
+luts/
+lr-ccprofiles/
+art/
+out/
+*.cube
+*.HALD
+*.hald.png
+*.dcp
+
+# ...but the synthetic eval fixtures must stay tracked
+!evals/fixtures/**
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
