@@ -4,13 +4,20 @@ All notable changes to `film-sim-delivery`.
 
 ## [Unreleased]
 
-- **README: added an Install section.** The repo root *is* the skill, so
-  `git clone` into a skills directory is the whole install — that was implied but
-  never written down. Verified end to end from a clean state: HTTPS clone →
-  `python3 -m venv` → `pip install -r requirements.txt` → `scripts/selftest.py`
-  passes, and `evals/make_fixtures.py --verify-reproducible` yields the same tree
-  hash as CI (`a83a297b51f8cee3`) on Python 3.9.6 and 3.13.15 alike.
-- 中文说明同样改为先指向 Install 步骤，不再默认目录已经在位。
+- **README rewritten** to describe what the code actually does: a per-workflow
+  status table that names what is *not* verified, explicit dependency and
+  base-profile requirements, a full script reference with side effects, and
+  limitations/destructive-operation warnings. Claims in the earlier version that
+  were stronger than the automated coverage (fidelity percentages, the highlight
+  cap, benchmark scores) are gone from the README; source code and the README now
+  define implemented behaviour.
+- **Added [`README.zh.md`](README.zh.md)** — a complete Chinese translation of the
+  README, linked from the top of both files. Same structure, same tables, same
+  caveats; only the prose is translated, so commands and paths stay identical.
+- Verified from a clean state over HTTPS: clone → `python3 -m venv` →
+  `pip install -r requirements.txt` → `scripts/selftest.py` passes, and
+  `evals/make_fixtures.py --verify-reproducible` yields the same tree hash as CI
+  (`a83a297b51f8cee3`) on Python 3.9.6 and 3.13.15 alike.
 
 ## [0.3.1]
 

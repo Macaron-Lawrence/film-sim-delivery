@@ -1,5 +1,7 @@
 # film-sim-delivery
 
+**English** · [中文说明](README.zh.md)
+
 `film-sim-delivery` is an [Agent Skill](https://agentskills.io) and a collection of standalone Python utilities for delivering static-image film looks. It can parse and apply LUTs, calibrate exposure placement, convert LUTs to Adobe creative profiles or HaldCLUT images, install generated XMP files, build contact sheets, fetch or curate source material, and run synthetic checks.
 
 This repository is not a LUT collection, a raw converter, a camera-profile generator, or a video color-management system. It includes one synthetic `.cube` fixture for tests, but no third-party LUT collection. Adobe applications, ART, RawTherapee, Resolve, and third-party base profiles are not bundled.
@@ -368,6 +370,8 @@ Normal LUT conversion, calibration, direct image processing, fixture generation,
 ## Repository layout
 
 ```text
+README.md                 this file
+README.zh.md              Chinese translation of this file
 SKILL.md                  Agent Skill instructions
 scripts/                  conversion, calibration, application, install, and source helpers
 references/               format notes, host notes, source records, and evaluation schema
