@@ -39,3 +39,7 @@ jobs:
         run: python evals/make_fixtures.py --out evals/fixtures
       - name: Fixtures are byte-reproducible
         run: python evals/make_fixtures.py --verify-reproducible
+      - name: Safety regression (no overwrite, no false success, no ghost scripts)
+        run: python evals/test_safety.py
+      - name: Grader self-check on a synthetic candidate run
+        run: python evals/test_grader.py

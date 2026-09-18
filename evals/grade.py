@@ -235,10 +235,12 @@ def grade(run_dir: Path, eval_id: int, fixtures_dir: Path | None = None) -> dict
                     any(v <= 2.0 for v in nums) and any(v > 1000 for v in nums),
                     f"数字 {len(nums)} 个，max={max(nums) if nums else None}")
             else:
-                add("独立复核：坏样本纯白确实 ≤215（肩部封顶）",
-                    bad_white is not None and bad_white <= 215, f"实测 {bad_white}")
-                add("evidence 含修复前后纯白数值（≤215 与 ≥250）",
-                    any(v <= 215 for v in nums) and any(v >= 250 for v in nums),
+                # 边界必须与 fixture 生成器的 SIG_NOPROTECT 一致（那里断言纯白 ∈ 0–220），
+                # 否则评分器会比样本本身更严，永远红。
+                add("独立复核：坏样本纯白确实封顶（≤220，且与生成器同界）",
+                    bad_white is not None and bad_white <= 220, f"实测 {bad_white}")
+                add("evidence 含修复前后纯白数值（≤220 与 ≥250）",
+                    any(v <= 220 for v in nums) and any(v >= 250 for v in nums),
                     f"数字 {len(nums)} 个")
         else:
             add("独立复核坏样本", False, "未提供 --fixtures")
@@ -267,7 +269,54 @@ def grade(run_dir: Path, eval_id: int, fixtures_dir: Path | None = None) -> dict
                 add("verification.json 的 checks 与独立重算一致",
                     bool(diffs) and max(diffs) <= TOL_GRAY,
                     f"最大差 {max(diffs):.2f}/255" if diffs else "无可比字段")
+
+            # ── 独立复算 decode_error_lsb：用声明的参数从 fixture LUT 重造表，与交付表比对 ──
+            # 这一项过去是"读交付方填的数字"，等于结构化自述；现在改成评分器自己算。
+            ver_params = (ver or {}).get("params", {}) if ver else {}
+            lut_path = (fixtures_dir / "luts/portra_like.cube") if fixtures_dir else None
+            declared_lsb = ((ver or {}).get("checks", {}) or {}).get("decode_error_lsb") if ver else None
+            if lut_path and lut_path.exists() and ver_params.get("pre_gain") is not None:
+                try:
+                    space = ver_params.get("space") or ("linear" if ps["meta"][:3] == [3, 1, 0] else "display")
+                    want = cc.build_table(lut_path, int(ver_params.get("divisions") or ps["div"]),
+                                          space, float(ver_params["pre_gain"]),
+                                          float(ver_params.get("protect") or 0.0))
+                    mine_lsb = float(np.abs(ps["table"] - want).max()) * 65535
+                    ok_lsb = mine_lsb <= 1.0
+                    if isinstance(declared_lsb, (int, float)):
+                        ok_lsb = ok_lsb and abs(float(declared_lsb) - mine_lsb) <= 0.6
+                        note = f"重算 {mine_lsb:.3f} vs 声明 {float(declared_lsb):.3f} /65535"
+                    else:
+                        note = f"重算 {mine_lsb:.3f} /65535（未声明）"
+                    add("独立复算 decode_error_lsb（用声明参数从 fixture LUT 重造表）", ok_lsb, note)
+                except Exception as exc:  # noqa: BLE001
+                    add("独立复算 decode_error_lsb（用声明参数从 fixture LUT 重造表）", False,
+                        f"重算失败：{type(exc).__name__}: {str(exc)[:60]}")
             else:
+                add("独立复算 decode_error_lsb（用声明参数从 fixture LUT 重造表）", False,
+                    "缺 fixture LUT 或 verification.json 未声明 params.pre_gain")
+
+            # ── 图片级四项：没有现场图片就不接受声明值当凭证 ──
+            img_metrics = ("brightness_ratio", "top5pct_median", "pct_ge_250", "highlight_detail_std")
+            declared_imgs = ((ver or {}).get("checks", {}) or {}) if ver else {}
+            have_any = any(isinstance(declared_imgs.get(k), (int, float)) for k in img_metrics)
+            imgs = [Path(x) for x in ((ver or {}).get("inputs", {}) or {}).get("images") or [] if Path(str(x)).exists()]
+            if imgs:
+                try:
+                    from verify_core import image_metrics  # noqa: F401  (可选：打包环境里可能没有)
+                    add("图片级指标可独立复算", False, "不应走到这里")
+                except Exception:  # noqa: BLE001
+                    add("图片级指标：声明值能否独立复算", False,
+                        "当前评分器未集成图片复算（声明值不作为通过依据）")
+            elif have_any:
+                add("图片级指标：声明值能否独立复算", False,
+                    "verification.json 声明了图片级指标但没有可用的现场图片，"
+                    "这些声明**不作为通过依据**（见 references/calibration.md §0）")
+            else:
+                add("图片级指标：声明值能否独立复算", True,
+                    "未声明图片级指标（未复算项已显式标为 None，可接受）")
+
+            if not claimed:
                 add("verification.json 的 checks 与独立重算一致", False, "缺 checks.gray_response")
         else:
             for t in ["修复后纯白 ≥250", "修复后中灰仍在 118–145",

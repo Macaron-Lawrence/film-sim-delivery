@@ -30,7 +30,7 @@
 ## 4. 不做护高光，纯白会被明显压低
 
 - **症状**："高光被切掉了/发白没细节"。CI 在**合成 fixture** 上验证的断言是：未做护高光时纯白输出
-  明显受压，范围 0–220（`evals/make_fixtures.py`），坏样本 ≤215（`evals/grade.py`）。
+  明显受压，范围 0–220（`evals/make_fixtures.py`），坏样本 ≤220（`evals/grade.py`）。
 - 早期文档另记有"最亮 5% 从 248 掉到 208、≥250 占比 0%、细节 std 从 6.1 掉到 1.0"，
   以及具体的 "~209"——这些属**未归档的历史报告值**（见 `calibration.md` §0），
   既不能代表所有 LUT，当前 CI 也不复算。
@@ -46,7 +46,8 @@
 - **根因**：命令字符串里含非 ASCII（如中文目录）时 ART 无法执行；JSON 本体放在中文目录没问题，
   `//` 注释也没问题——**只有 command 路径**必须 ASCII。
 - **验证**：中文 JSON + ASCII 命令 → 生效；中文命令 → 失效（对照实验过）。
-- **修法**：把桥接启动器放到纯 ASCII 路径（如 `~/artclut/`），JSON 里指向它（`setup-art-bridge.sh`）。
+- **修法**：把桥接启动器放到纯 ASCII 路径（如 `~/artclut/`），JSON 里指向它。
+  桥接脚本**不在本仓库内**，需要在 ART 里手工配置（见 `hosts.md`）。
 
 ## 6. ART / RawTherapee 的 Film Simulation 只吃 HaldCLUT
 

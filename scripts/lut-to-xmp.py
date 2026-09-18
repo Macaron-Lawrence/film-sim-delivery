@@ -40,6 +40,7 @@ import uuid
 from pathlib import Path
 
 import numpy as np
+import sys
 
 HERE = Path(__file__).resolve().parent
 
@@ -193,6 +194,25 @@ def derive(lut, pre_gain: float) -> dict:
 
 # ---------------------------------------------------------------- XMP 生成
 
+def xesc(v) -> str:
+    """XML 文本节点转义：名字/分组里的 & < > 会直接生成非法 XMP。"""
+    return str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def xattr(v) -> str:
+    """XML 属性值转义。"""
+    return xesc(v).replace('"', "&quot;").replace("'", "&apos;")
+
+
+def assert_parsable(path, what: str) -> None:
+    """写盘后用标准解析器复读；生成非法 XMP 就直接失败，别交付出去。"""
+    import xml.etree.ElementTree as ET
+    try:
+        ET.parse(str(path))
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"{what} 不是合法 XML：{path}\n  {type(exc).__name__}: {exc}") from exc
+
+
 def xmp(name: str, group: str, d: dict, taste) -> str:
     _, grain_amt, grain_size, grain_freq, vignette = taste
     c = d["curves"]; b = d["bands"]; g = d["grading"]
@@ -218,7 +238,7 @@ def xmp(name: str, group: str, d: dict, taste) -> str:
     xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
    crs:PresetType="Normal"
    crs:Cluster="{group}"
-   crs:UUID="{uid}"
+   crs:UUID="{xattr(uid)}"
    crs:SupportsAmount="False"
    crs:SupportsColor="True"
    crs:SupportsMonochrome="False"
@@ -273,17 +293,17 @@ def xmp(name: str, group: str, d: dict, taste) -> str:
   >
 {curve('')}{curve('Red')}{curve('Green')}{curve('Blue')}   <crs:Name>
     <rdf:Alt>
-     <rdf:li xml:lang="x-default">{name}</rdf:li>
+     <rdf:li xml:lang="x-default">{xesc(name)}</rdf:li>
     </rdf:Alt>
    </crs:Name>
    <crs:ShortName>
     <rdf:Alt>
-     <rdf:li xml:lang="x-default">{name}</rdf:li>
+     <rdf:li xml:lang="x-default">{xesc(name)}</rdf:li>
     </rdf:Alt>
    </crs:ShortName>
    <crs:Group>
     <rdf:Alt>
-     <rdf:li xml:lang="x-default">{group}</rdf:li>
+     <rdf:li xml:lang="x-default">{xesc(group)}</rdf:li>
     </rdf:Alt>
    </crs:Group>
    <crs:Look
@@ -328,6 +348,7 @@ def main() -> int:
         name, *_ = TASTE[stem]
         path = out_dir / f"{name}.xmp"
         path.write_text(xmp(name, args.group, d, TASTE[stem]), encoding="utf-8")
+        assert_parsable(path, "近似预设")
         made += 1
         mid = [o for i, o in d["curves"][""] if i >= 128][:1]
         rgbs = []
@@ -339,6 +360,10 @@ def main() -> int:
               f"{g['Highlight'][0]}°/{g['Highlight'][1]}")
 
     print(f"\n生成 {made} 个 XMP → {out_dir}")
+    if not made:
+        print("\n✗ 没有生成任何文件——跳过 ≠ 成功。检查文件名是否在 TASTE 表里、或 --only 是否写错。",
+              file=sys.stderr)
+        return 1
     print("装进 Lightroom：")
     print(f"  mkdir -p ~/Library/Application\\ Support/Adobe/Lightroom/Develop\\ Presets/{args.group}")
     print(f"  cp {out_dir}/*.xmp ~/Library/Application\\ Support/Adobe/Lightroom/Develop\\ Presets/{args.group}/")

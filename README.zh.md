@@ -10,17 +10,17 @@
 
 | 工作流 | 状态与边界 |
 |---|---|
-| Adobe 创意配置文件 | 由 `scripts/lut-to-ccprofile.py` 实现。它把重采样后的 3D LUT 以 Adobe `RGBTable` 形式内嵌进 XMP，并写一个包装预设。Lightroom、Camera Raw、Bridge、Photoshop 的**实际加载未经 CI 验证**。所需的基底配置文件必须已存在于 Adobe 宿主里。 |
+| Adobe 创意配置文件 | 由 `scripts/lut-to-ccprofile.py` 实现。它把重采样后的 3D LUT 以 Adobe `RGBTable` 形式内嵌进 XMP，并写一个包装预设。**默认处理任意文件名**（`--only-known` 才按内置名表过滤），名字里的 XML 特殊字符会被转义、写出的每个文件都用标准解析器复读，**零产物时返回非零退出码**而不是报告成功。Lightroom、Camera Raw、Bridge、Photoshop 的**实际加载未经 CI 验证**。所需的基底配置文件必须已存在于 Adobe 宿主里。 |
 | `.cube` 转 HaldCLUT | 由 `scripts/cube-to-hald.py` 实现。输出 8 位 PNG，支持 `.cube` 的 1D shaper。面向 ART 与 RawTherapee 的 Film Simulation，但**宿主加载未经 CI 验证**。 |
-| 直接处理图片 | 由 `scripts/lr-filmsim.py` 实现，支持 `.cube` 与 HaldCLUT 输入。TIFF 族走 `tifffile`，其他 Pillow 支持的格式走 Pillow。`scripts/apply-look.sh` 是 POSIX 便捷包装。 |
+| 直接处理图片 | 由 `scripts/lr-filmsim.py` 实现，支持 `.cube` 与 HaldCLUT 输入。TIFF 族走 `tifffile`，其他 Pillow 支持的格式走 Pillow。**原地覆盖不再是默认行为**：不给 `--out DIR` 或不显式写 `--in-place` 就拒绝运行；输出目录里已有同名文件时不给 `--overwrite` 就拒绝覆盖；任何原地写入前都会先写时间戳备份。`--calibration` 复用逐卷标定增益，`--protect` 与配置文件路径共用同一套护高光口径。`scripts/apply-look.sh` 是 POSIX 便捷包装。 |
 | 近似 XMP 预设 | 由 `scripts/lut-to-xmp.py` 实现，覆盖 8 个硬编码胶片名。它推导色调曲线、HSL、颜色分级、饱和度、自然饱和度、颗粒、锐化、降噪、暗角参数。这是**近似**，不是编码的 3D LUT，且**没有建立可信的保真度百分比**。 |
 | 曝光标定 | 由 `scripts/calibrate-luts.py` 实现。用二分法对每个 LUT 求 `pre_gain`，目标可以是中点，也可以是中性灰渐变带的加权亮度。处理顶层 `.cube`、`.png`、`.tif` 文件。 |
-| 安装与卸载 | 由 `scripts/install_ccprofiles.py` 实现；`scripts/install-lr-ccprofiles.sh` 在 POSIX 系统上包装它。按源文件名匹配来复制或删除 XMP。**不安装 DCP 基底配置文件**。 |
+| 安装与卸载 | 由 `scripts/install_ccprofiles.py` 实现；`scripts/install-lr-ccprofiles.sh` 在 POSIX 系统上包装它。`list` 与 `install --dry-run` 先给计划；会覆盖同名但内容不同的文件时**直接中止，除非显式 `--force`**；被覆盖的旧文件备份到 `.filmsim-backup/<时间戳>/`；每次安装都更新 `.filmsim-manifest.json`；`remove` **只删清单里记录、且 SHA-256 仍匹配**的文件。**不安装 DCP 基底配置文件**。 |
 | 基础 LUT 质检 | 由 `scripts/qa-luts.py` 实现。报告抽样中点、白点、黑点与对比度，并标记灰度响应偏弱或反相的情况。它**不**检测单调性、截断、色域范围，也不测与恒等变换的偏差。 |
 | 拼对比图 | 由 `scripts/try-looks.py` 实现。把顶层 `.cube` 与 `.png` LUT 施加到一张 Pillow 可读的图片上，输出 JPEG 预览并拼成带标注的 JPEG 大图。 |
 | 素材抓取与筛选 | `scripts/fetch_sources.sh` 列出或下载指定的上游来源。`scripts/curate-rt-halclut.py` 从 RawTherapee HaldCLUT 树里复制指定子集或全部 PNG。这些流程受上游许可证约束，并可能占用大量磁盘与带宽。 |
 | 光谱 LUT 烘焙 | `scripts/bake-spectral-luts.py` 驱动可选的 `spectral_film_lut` 包，执行内置任务列表。这条路径是可选的，**仓库 CI 不覆盖**。 |
-| 样本、评分与自检 | `evals/make_fixtures.py` 生成确定性的合成样本。`evals/grade.py` 对另外产出的评测产物打分。`scripts/selftest.py` 检查一条合成的标定 + Adobe 表格编解码路径。这些都是**内部检查，不是宿主集成测试**。 |
+| 样本、评分与自检 | `evals/make_fixtures.py` 生成确定性的合成样本。`evals/grade.py` 对另外产出的评测产物打分，并**自己复算**能算的项（包括从 fixture LUT 重新推导 `decode_error_lsb`，而不是采信声明值）。`evals/test_safety.py` 断言上面的安全行为；`evals/test_grader.py` 断言评分器对已知正确交付仍给满分、产物缺失时仍会失败。`scripts/selftest.py` 检查一条合成的标定 + Adobe 表格编解码路径。这些都是**内部检查，不是宿主集成测试**。 |
 
 ## 依赖要求
 
@@ -111,7 +111,7 @@ python3 scripts/lut-to-ccprofile.py \
 
 标定与生成配置文件要使用**相同**的 `--protect` 值。编码器会读取标定 JSON 里的 `pre_gain`，但**不会校验** JSON 中记录的 `mode` 与 `protect` 是否与本次调用一致。
 
-安装前先看一眼：
+安装前必须先看一眼。安装器遇到同名但内容不同的文件会**直接中止**（除非 `--force`），覆盖前会备份，所以这一步不要跳：
 
 ```bash
 python3 scripts/install_ccprofiles.py list \
@@ -135,14 +135,15 @@ python3 scripts/install_ccprofiles.py install \
 
 ### 直接施加一个 LUT
 
-默认情况下 `lr-filmsim.py` 会**原地替换**每个输入文件。除非你确实想覆盖，否则请用 `--out`。
+`lr-filmsim.py` **不再默认原地替换**：必须选一个落盘位置——`--out DIR` 写新文件，原地改写要显式 `--in-place`（会先写时间戳备份）。建议同时传 `--calibration` 让每个卷用自己的标定增益，并传与生成配置文件时相同的 `--protect`，这样两条交付路径才是同一套色调口径。
 
 ```bash
 python3 scripts/lr-filmsim.py \
   --lut "$FILMSIM_ROOT/luts/look.cube" \
   --out "$FILMSIM_ROOT/rendered" \
   --suffix _look \
-  --pre-gain 1.0 \
+  --calibration "$FILMSIM_ROOT/luts/_calibration.json" \
+  --protect 0.68 \
   --strength 0.75 \
   photo.tif photo.jpg
 ```
@@ -190,7 +191,7 @@ python3 scripts/lut-to-xmp.py \
   --pre-gain 1.0
 ```
 
-只有出现在脚本 `TASTE` 表里的文件名会被处理。未知名字会被跳过，因为脚本没有兜底的颗粒与暗角配方。产物是**参数化预设**，不是通用的 3D LUT 转换。
+只有出现在脚本 `TASTE` 表里的文件名会被处理。未知名字会被跳过，因为脚本没有兜底的颗粒与暗角配方；**零产物时脚本返回失败**。产物是**参数化预设**，不是通用的 3D LUT 转换。
 
 ### 在一张图上比较多个外观
 
@@ -259,18 +260,21 @@ python3 scripts/install_ccprofiles.py remove \
 |---|---|---|---|
 | `scripts/lut-to-ccprofile.py` | 顶层 `.cube` / `.png` / `.tif` LUT → 配置文件 XMP + 包装 XMP | `--dir`, `--out`, `--only`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--allow-unknown`, `--group`, `--protect` | 创建输出目录，覆盖同名 XMP。内部会解码每张编码后的表，要求误差小于 1 个 16 位 LSB。**不测 Adobe 宿主。** |
 | `scripts/calibrate-luts.py` | 顶层 LUT 文件 → JSON | `--mode`, `--protect`, `--merge`, `--out` | 写 JSON。二分法**假定**得分在增益 0.10–4.0 区间单调，且不检查是否成功夹住区间。`--merge` 会保留已有的无关记录。 |
-| `scripts/lr-filmsim.py` | `.cube` 或 HaldCLUT + 图片 → 处理后的图片 | `--out`, `--suffix`, `--strength`, `--linear-pipeline`, `--pre-gain`, `--info` | 默认**原地覆盖、无备份**。使用原子临时文件替换。参数范围不做强制校验。 |
+| `scripts/lr-filmsim.py` | `.cube` 或 HaldCLUT + 图片 → 处理后的图片 | `--out`, `--in-place`, `--overwrite`, `--calibration`, `--protect`, `--suffix`, `--strength`, `--linear-pipeline`, `--pre-gain`, `--info` | **必须显式选择落盘位置**；原地写入一定先备份（`.filmsim-backups/`）；输出重名默认拒绝。使用原子临时文件替换。 |
 | `scripts/cube-to-hald.py` | 顶层 `.cube` → HaldCLUT PNG | `--level`, `--pre-gain`, `--only`, `--out` | 创建输出目录，覆盖同名 PNG。**不做往返比对。** |
 | `scripts/lut-to-xmp.py` | 已知的顶层 `.cube` → 近似预设 XMP | `--group`, `--only`, `--pre-gain`, `--out` | 创建或覆盖 XMP。未知 stem 跳过。**不做 XML 解析校验，也不测 Adobe 宿主。** |
 | `scripts/qa-luts.py` | 顶层 `.cube` 与 `.png` LUT → 控制台报告 | `--dir`, `--only` | 只读。抽样一条固定灰度探针，基于黑白对比与白点水平给出二值启发式结论。 |
 | `scripts/try-looks.py` | 一张 Pillow 可读图片 + 顶层 `.cube` / `.png` LUT → JPEG 预览与拼图 | `--lut-dir`, `--only`, `--out`, `--size`, `--cols`, `--strength`, `--linear-pipeline`, `--pre-gain` | 创建输出文件，覆盖重名文件。这是**目视参考材料，不是数值质检**。 |
-| `scripts/install_ccprofiles.py` | 源 XMP 目录 → Adobe 设置目录 | `list`, `install`, `remove`, `--src`, `--dest`, `--dry-run` | install 覆盖同名目标文件且无备份。remove 按同名删除目标文件。**不改动 DCP 文件。** |
+| `scripts/install_ccprofiles.py` | 源 XMP 目录 → Adobe 设置目录 | `list`, `install`, `remove`, `--src`, `--dest`, `--dry-run`, `--force`, `--no-backup` | install 覆盖前先备份并更新清单；遇到同名但内容不同的文件会中止整次运行（除非 `--force`）。remove 按清单精确回滚，有文件被改动过就整次中止。**不改动 DCP 文件。** |
 | `scripts/install-lr-ccprofiles.sh` | 安装器的 POSIX 包装 | `--list`, `--remove`；第一个参数之后的其余参数透传 | 副作用与 Python 安装器相同。默认执行 install。 |
 | `scripts/apply-look.sh` | LUT 名模糊匹配 + 文件或目录 → 直接处理 | `--ls`, `--out`, `--strength`, `--suffix`, `--linear-pipeline`, `--pre-gain`, `--flat` | 因为它委托给 `lr-filmsim.py`，**可能覆盖图片**。目录搜索只深入一层。需要常见 POSIX 工具。 |
 | `scripts/fetch_sources.sh` | 具名上游来源 → 下载或安装工具 | `--list`, `rt`, `spectra`, `fuji`, `spektra` | 需要联网。可能下载数百 MB、覆盖式解压、创建虚拟环境、clone 仓库或安装工具。 |
 | `scripts/curate-rt-halclut.py` | RawTherapee HaldCLUT 树 → 复制出的 PNG 子集 | `--src`, `--dst`, `--all`, `--list` | 即使在 `--list` 模式下也会创建目标目录，并覆盖重名的已复制文件。**不跑 LUT 质检。** |
 | `scripts/bake-spectral-luts.py` | 内置光谱胶片任务 → `.cube` | `--out`, `--size`, `--only`, `--list`, `--noise` | 导入并执行第三方 `spectral_film_lut`；在输出目录写入。`--noise` 无效果。 |
+| `scripts/verify-delivery.py` | 交付的配置文件（+ 可选源 LUT / 标定 / 真实照片）→ `verification.json` | `--profile`, `--lut`, `--calibration`, `--pre-gain`, `--protect`, `--images`, `--declare`, `--out` | 只读输入，只写输出 JSON。所有非 null 的 check 都由它算出；算不出来的列在 `unrecomputed`，**不作为通过**。图片级指标以现场图片为额外下限，绝不比绝对目标更宽松。 |
 | `scripts/selftest.py` | 生成的合成 LUT → 临时标定与 XMP 产物 | `--work` | 不给 `--work` 时，成功后删除其临时目录。检查表格 MD5 约定、编解码误差、中点与被保护的白点。 |
+| `evals/test_safety.py` | 临时工作区 → 通过/失败报告 | — | 断言：不给 `--in-place` 不会原地写；不会静默覆盖；零产物退出非零；任意文件名与 XML 特殊字符可用；安装冲突会中止；回滚按清单精确执行；标定口径不一致会被拒；文档不引用不存在的脚本。 |
+| `evals/test_grader.py` | 造一个已知正确的候选并打分 | — | 断言评分器给它满分、删掉产物后不再满分、且真的复算了 `decode_error_lsb`。 |
 | `scripts/selftest.sh` | `scripts/selftest.py` 的 POSIX 包装 | 参数透传 | 校验内容与 Python 自检相同。 |
 | `evals/make_fixtures.py` | 合成生成器 → 提交风格的样本树 | `--out`, `--verify-reproducible` | 写入或覆盖样本。检查缺陷签名；可复现模式会比对两棵生成的树。 |
 | `evals/grade.py` | 一次外部评测运行目录 → 控制台或 JSON 评分 | `--eval`, `--fixtures`, `--no-fixtures`, `--json` | 除非给 `--json`，否则只读。解码候选配置文件并检查声明的评测产物；**它不是通用的交付验证器**。 |
@@ -334,7 +338,9 @@ python3 scripts/selftest.py
 2. 用 `ast` 解析每个 Python 入口；
 3. 运行 `scripts/selftest.py`；
 4. 重新生成合成样本并检查其缺陷签名；
-5. 验证样本生成是字节可复现的。
+5. 验证样本生成是字节可复现的；
+6. 运行 `evals/test_safety.py`（不覆盖、不误报成功、不引用幽灵脚本）；
+7. 运行 `evals/test_grader.py`（评分器对已知正确交付仍满分、产物缺失时仍失败）。
 
 CI **不测试**第三方下载、光谱烘焙、原生 Windows 上的 shell 包装，也不测试与任何图片或视频宿主的集成。
 
@@ -346,13 +352,13 @@ CI **不测试**第三方下载、光谱烘焙、原生 Windows 上的 shell 包
 
 处理原始文件或安装配置文件之前，请先读这一节。
 
-- `lr-filmsim.py` 默认覆盖输入文件，**不做备份**。需要非破坏性处理就传 `--out`。
-- 安装器覆盖同名的目标 XMP 文件且**无备份**。卸载会依据当前源目录，删除同名的目标文件。
+- `lr-filmsim.py` **不再默认覆盖**：不给 `--out DIR` 或 `--in-place` 就拒绝运行；原地写入前会在 `.filmsim-backups/` 写时间戳备份；输出目录里已有同名文件时必须显式 `--overwrite`。
+- 安装器覆盖前会备份（`.filmsim-backup/<时间戳>/`），并把每次安装记入 `.filmsim-manifest.json`；遇到同名但内容不同的文件会**中止**，除非显式 `--force`。卸载按清单精确执行：只删 SHA-256 仍与安装时一致的文件，不一致则整次卸载中止。
 - TIFF 写入**不保留 TIFF 元数据**。基于 Pillow 的写入在原本存在 ICC profile 时会保留它，但不保留一般 EXIF 或其他图像元数据。
 - 图片处理只保留前三个通道，alpha 与额外通道被丢弃。灰度输入会被扩展成 RGB 处理，然后**取红通道**而不是按亮度还原。
 - 图片工具假定 RGB 值是归一化的，**不做 ICC 色彩转换**。结果取决于喂给它的编码值。
 - 生成的 XMP 会把文件名、标签、描述、组名直接插值进 XML。`&`、`<`、引号等对 XML 敏感的字符**没有转义**。
-- `lut-to-ccprofile.py` 除非给了 `--allow-unknown`，否则跳过未知 stem。当发现的所有文件都被跳过时，它可能生成零个配置文件**却仍以 0 退出**。
+- `lut-to-ccprofile.py` 默认处理任意文件名，`--only-known` 才按内置名表过滤。生成零个配置文件时**返回非零退出码**，跳过不会再被当成成功。
 - 配置文件的组跟随 `--group`，但包装预设的组目前**硬编码**为 `胶片模拟 (光谱 LUT)`。因此自定义组时，这一对可能不一致。
 - 标定 JSON 记录了 `mode` 与 `protect`，但编码器只消费 `pre_gain`；它**不强制**两者匹配。
 - `--base-profile` 可以指定自定义配置文件，但 `--base-digest` 只在同时提供了 `--base-profile` 时才被使用。脚本**不校验**这两个值是否对应到已安装的 DCP 文件。

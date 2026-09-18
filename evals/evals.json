@@ -43,11 +43,11 @@
       "id": 2,
       "eval_name": "diagnose-missing-highlight-protection",
       "prompt": "Lightroom 里装了 <root>/bad/portra_noprotect.xmp（来源可靠、空间与基底都正常），套上后中灰正常但高光发白、亮部没细节。诊断原因、生成修好的配置文件，产物放 <run-dir>/，并写出 diagnosis.json 与 verification.json。",
-      "expected_output": "根因 = 该表未做护高光（肩部封顶）：纯白只到 ~209–215；diagnosis.json 的 root_cause_code 为 missing_highlight_protection；修复后纯白 ≥250、高光细节恢复。",
+      "expected_output": "根因 = 该表未做护高光（肩部封顶）：纯白被封顶（合成样本实测约 217，CI 断言范围 0–220）；diagnosis.json 的 root_cause_code 为 missing_highlight_protection；修复后纯白 ≥250、高光细节恢复。",
       "files": ["bad/portra_noprotect.xmp", "luts/portra_like.cube"],
       "assertions": [
         "存在 diagnosis.json，root_cause_code = missing_highlight_protection",
-        "evidence 给出修复前的纯白输出（≤215）与修复后的纯白（≥250）",
+        "evidence 给出修复前的纯白输出（≤220）与修复后的纯白（≥250）",
         "存在修好的 profile 且可解码",
         "修复后 white_out ≥ 250",
         "修复后 mid_gray_out 仍在 118–145（不能靠整体提亮来救高光）",

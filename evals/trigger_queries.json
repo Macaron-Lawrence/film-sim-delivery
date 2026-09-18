@@ -1,23 +1,114 @@
 [
-  {"query": "帮我把我下载的那个 Koala 胶片 LUT 装到 Lightroom 里，重启后能在配置文件里选到就行", "should_trigger": true},
-  {"query": "套上 Portra 400 的配置文件之后整张照片发灰、对比很低，高光也白花花一片没细节，怎么修", "should_trigger": true},
-  {"query": "我有一批图想统一套成富士的那个 Velvia 风格，命令行批量处理可以吗", "should_trigger": true},
-  {"query": "在 ART 里怎么用按 datasheet 烘出来的胶片 LUT？我装了 spektrafilm", "should_trigger": true},
-  {"query": "Lightroom 的配置文件浏览器里怎么加自定义 profile？我有 .cube 文件", "should_trigger": true},
-  {"query": "帮我从零烘一个柯达 Tri-X 400 的黑白 LUT，然后弄进 Lightroom", "should_trigger": true},
-  {"query": "上次装的那批胶片预设，黑白卷那些看起来偏暗，能重新标定一下吗", "should_trigger": true},
-  {"query": "有没有开源的黑白胶片 lut 库？想要 HP5 和 Delta 的", "should_trigger": true},
-  {"query": "adobe 的 creative profile 到底怎么自己做？我想把一张 haldclut png 转成 xmp", "should_trigger": true},
-  {"query": "胶片模拟的预设装了一堆，但每个卷亮度都不一样，有的还过曝，怎么统一", "should_trigger": true},
-
-  {"query": "帮我把这段视频调成电影感，加个 Kodak 2383 的 LUT，输出 4K", "should_trigger": false},
-  {"query": "Lightroom 里怎么给照片加颗粒和暗角？", "should_trigger": false},
-  {"query": "我的相机是刚买的 X-T5，Lightroom 里没有对应的相机配置文件，怎么办", "should_trigger": false},
-  {"query": "帮我把这个月拍的 RAW 按日期整理进文件夹", "should_trigger": false},
-  {"query": "GIMP 里怎么安装 G'MIC 插件？想用里面的艺术滤镜", "should_trigger": false},
-  {"query": "写个 Python 脚本把 PNG 转成 JPEG，顺便压缩体积", "should_trigger": false},
-  {"query": "色彩管理里的 sRGB 和 Adobe RGB 有什么区别？我该选哪个", "should_trigger": false},
-  {"query": "帮我在 Photoshop 里做一个双色调（duotone）效果", "should_trigger": false},
-  {"query": "我们网站要上一批商品图，帮我把背景统一抠成白色", "should_trigger": false},
-  {"query": "胶片相机的扫描文件应该怎么设置白平衡才能不发黄", "should_trigger": false}
+ {
+  "query": "帮我把我下载的那个 Koala 胶片 LUT 装到 Lightroom 里，重启后能在配置文件里选到就行",
+  "should_trigger": true
+ },
+ {
+  "query": "套上 Portra 400 的配置文件之后整张照片发灰、对比很低，高光也白花花一片没细节，怎么修",
+  "should_trigger": true
+ },
+ {
+  "query": "我有一批图想统一套成富士的那个 Velvia 风格，命令行批量处理可以吗",
+  "should_trigger": true
+ },
+ {
+  "query": "在 ART 里怎么用按 datasheet 烘出来的胶片 LUT？我装了 spektrafilm",
+  "should_trigger": true
+ },
+ {
+  "query": "Lightroom 的配置文件浏览器里怎么加自定义 profile？我有 .cube 文件",
+  "should_trigger": true
+ },
+ {
+  "query": "帮我从零烘一个柯达 Tri-X 400 的黑白 LUT，然后弄进 Lightroom",
+  "should_trigger": true
+ },
+ {
+  "query": "上次装的那批胶片预设，黑白卷那些看起来偏暗，能重新标定一下吗",
+  "should_trigger": true
+ },
+ {
+  "query": "有没有开源的黑白胶片 lut 库？想要 HP5 和 Delta 的",
+  "should_trigger": true
+ },
+ {
+  "query": "adobe 的 creative profile 到底怎么自己做？我想把一张 haldclut png 转成 xmp",
+  "should_trigger": true
+ },
+ {
+  "query": "胶片模拟的预设装了一堆，但每个卷亮度都不一样，有的还过曝，怎么统一",
+  "should_trigger": true
+ },
+ {
+  "query": "帮我把这段视频调成电影感，加个 Kodak 2383 的 LUT，输出 4K",
+  "should_trigger": false
+ },
+ {
+  "query": "Lightroom 里怎么给照片加颗粒和暗角？",
+  "should_trigger": false
+ },
+ {
+  "query": "我的相机是刚买的 X-T5，Lightroom 里没有对应的相机配置文件，怎么办",
+  "should_trigger": false
+ },
+ {
+  "query": "帮我把这个月拍的 RAW 按日期整理进文件夹",
+  "should_trigger": false
+ },
+ {
+  "query": "GIMP 里怎么安装 G'MIC 插件？想用里面的艺术滤镜",
+  "should_trigger": false
+ },
+ {
+  "query": "写个 Python 脚本把 PNG 转成 JPEG，顺便压缩体积",
+  "should_trigger": false
+ },
+ {
+  "query": "色彩管理里的 sRGB 和 Adobe RGB 有什么区别？我该选哪个",
+  "should_trigger": false
+ },
+ {
+  "query": "帮我在 Photoshop 里做一个双色调（duotone）效果",
+  "should_trigger": false
+ },
+ {
+  "query": "我们网站要上一批商品图，帮我把背景统一抠成白色",
+  "should_trigger": false
+ },
+ {
+  "query": "胶片相机的扫描文件应该怎么设置白平衡才能不发黄",
+  "should_trigger": false
+ },
+ {
+  "query": "这段 Premiere 的调色素材要用哪个 film emulation LUT？给我一个 .cube 和强度建议",
+  "should_trigger": false
+ },
+ {
+  "query": "我的相机是 A7C2，Lightroom 里没有对应的相机配置文件，怎么装一个 .dcp",
+  "should_trigger": false
+ },
+ {
+  "query": "帮我写个 Lightroom 预设，把这张照片的曝光提 0.5 档、对比加 20、加点暗角",
+  "should_trigger": false
+ },
+ {
+  "query": "把这段 4K 视频套上胶片感、加颗粒，输出 ProRes",
+  "should_trigger": false
+ },
+ {
+  "query": "帮我批量抠图，把背景换成纯白，然后导出成 JPG",
+  "should_trigger": false
+ },
+ {
+  "query": "客户给了我一批 .cube（文件名像 Client Look 01.cube 这种），要装进 Lightroom 用",
+  "should_trigger": true
+ },
+ {
+  "query": "帮我给这批 TIFF 套上 Kodak Portra 400 的胶片色，输出到一个新目录，别动原图",
+  "should_trigger": true
+ },
+ {
+  "query": "ART 里想用 Velvia 的胶片模拟，HaldCLUT 怎么弄",
+  "should_trigger": true
+ }
 ]

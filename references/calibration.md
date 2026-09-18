@@ -32,7 +32,7 @@
 | 断言 | 位置 | 范围 |
 |---|---|---|
 | 未做护高光时，合成样本纯白明显受压 | `evals/make_fixtures.py`（`SIG_NOPROTECT`） | 纯白输出 ∈ 0–220 |
-| 坏样本纯白确实封顶 | `evals/grade.py` | ≤ 215 |
+| 坏样本纯白确实封顶 | `evals/grade.py`（与生成器同界） | ≤ 220 |
 | 护高光后纯白回到 255、中灰落在 118–145 | `scripts/selftest.py` | 合成 17 格 LUT |
 | 编解码往返误差 | `scripts/selftest.py` | ≤ 1.0 / 65535 |
 

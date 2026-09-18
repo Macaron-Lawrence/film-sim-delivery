@@ -10,17 +10,17 @@ This repository is not a LUT collection, a raw converter, a camera-profile gener
 
 | Workflow | Status and limits |
 |---|---|
-| Adobe creative profiles | Implemented by `scripts/lut-to-ccprofile.py`. It embeds a resampled 3D LUT in XMP as an Adobe `RGBTable` and writes a wrapper preset. Actual Lightroom, Camera Raw, Bridge, and Photoshop loading is not tested in CI. The required base profile must already exist in the Adobe host. |
+| Adobe creative profiles | Implemented by `scripts/lut-to-ccprofile.py`. It embeds a resampled 3D LUT in XMP as an Adobe `RGBTable` and writes a wrapper preset. It processes **any** filename by default (`--only-known` restricts to the built-in name table), XML-escapes names and re-parses every file it writes, and **exits non-zero when it produces zero profiles** instead of reporting success. Actual Lightroom, Camera Raw, Bridge, and Photoshop loading is not tested in CI. The required base profile must already exist in the Adobe host. |
 | `.cube` to HaldCLUT | Implemented by `scripts/cube-to-hald.py`. It writes an 8-bit PNG and supports a `.cube` 1D shaper. Intended for ART and RawTherapee Film Simulation, but host loading is not tested in CI. |
-| Direct image processing | Implemented by `scripts/lr-filmsim.py` for `.cube` and HaldCLUT inputs. TIFF-family files use `tifffile`; other Pillow-supported formats use Pillow. `scripts/apply-look.sh` is a POSIX convenience wrapper. |
+| Direct image processing | Implemented by `scripts/lr-filmsim.py` for `.cube` and HaldCLUT inputs. TIFF-family files use `tifffile`; other Pillow-supported formats use Pillow. **In-place overwriting is no longer the default**: the tool refuses to run without either `--out DIR` or an explicit `--in-place`, refuses to overwrite an existing output without `--overwrite`, and writes a timestamped backup before any in-place write. `--calibration` reuses the per-LUT gain and `--protect` the same highlight protection as the profile path. `scripts/apply-look.sh` is a POSIX convenience wrapper. |
 | Approximate XMP presets | Implemented by `scripts/lut-to-xmp.py` for eight hard-coded film names. It derives tone curves, HSL adjustments, color grading, saturation, vibrance, grain, sharpening, noise reduction, and vignette settings. It is an approximation, not an encoded 3D LUT, and no fidelity percentage is established. |
 | Exposure calibration | Implemented by `scripts/calibrate-luts.py`. It solves a per-LUT pre-gain by bisection using either midpoint or weighted neutral-ramp brightness. It handles top-level `.cube`, `.png`, and `.tif` files. |
-| Installation and removal | Implemented by `scripts/install_ccprofiles.py`; `scripts/install-lr-ccprofiles.sh` wraps it on POSIX systems. It copies or removes XMP files by matching source filenames. It does not install DCP base profiles. |
+| Installation and removal | Implemented by `scripts/install_ccprofiles.py`; `scripts/install-lr-ccprofiles.sh` wraps it on POSIX systems. `list` and `install --dry-run` show the plan first; an install that would overwrite a different same-named file **aborts unless `--force`**; overwritten files are backed up under `.filmsim-backup/<timestamp>/`; every install updates `.filmsim-manifest.json`; and `remove` deletes only files recorded in that manifest whose SHA-256 still matches. It does not install DCP base profiles. |
 | Basic LUT QA | Implemented by `scripts/qa-luts.py`. It reports sampled midpoint, white, black, and contrast, and flags weak or inverted grayscale response. It does not test monotonicity, clipping, gamut range, or deviation from identity. |
 | Contact sheets | Implemented by `scripts/try-looks.py`. It applies top-level `.cube` and `.png` LUTs to one Pillow-readable image, writes JPEG previews, and assembles a labeled JPEG sheet. |
 | Source acquisition and curation | `scripts/fetch_sources.sh` lists or downloads selected upstream sources. `scripts/curate-rt-halclut.py` copies a named subset, or all PNGs, from a RawTherapee HaldCLUT tree. These workflows use upstream licenses and may use substantial disk and network bandwidth. |
 | Spectral LUT baking | `scripts/bake-spectral-luts.py` drives the optional `spectral_film_lut` package for a built-in job list. This path is optional and not exercised by repository CI. |
-| Fixtures, grader, and self-test | `evals/make_fixtures.py` creates deterministic synthetic fixtures. `evals/grade.py` grades separately produced evaluation artifacts. `scripts/selftest.py` checks a synthetic calibration and Adobe table encode/decode path. These are internal checks, not application-host integration tests. |
+| Fixtures, grader, and self-test | `evals/make_fixtures.py` creates deterministic synthetic fixtures. `evals/grade.py` grades separately produced evaluation artifacts and independently recomputes what it can, including re-deriving `decode_error_lsb` from the fixture LUT instead of trusting the declared value. `evals/test_safety.py` asserts the safety behaviour above; `evals/test_grader.py` asserts the grader still scores a known-good delivery full marks and still fails when artifacts are missing. `scripts/selftest.py` checks a synthetic calibration and Adobe table encode/decode path. These are internal checks, not application-host integration tests. |
 
 ## Requirements
 
@@ -111,7 +111,8 @@ python3 scripts/lut-to-ccprofile.py \
 
 Use the same `--protect` value for calibration and profile generation. The encoder reads `pre_gain` from the calibration JSON, but it does not verify the JSON's recorded `mode` or `protect` values.
 
-Inspect before installing:
+Inspect before installing. The installer aborts on a conflicting same-named file unless
+you pass `--force`, and it backs up anything it overwrites, so never skip this step:
 
 ```bash
 python3 scripts/install_ccprofiles.py list \
@@ -135,14 +136,18 @@ Restart the Adobe host and test on representative raw files. The repository cann
 
 ### Apply a LUT directly
 
-By default, `lr-filmsim.py` replaces each input file in place. Use `--out` unless overwrite is intentional.
+`lr-filmsim.py` refuses to run unless you choose a destination: `--out DIR` writes new files,
+and rewriting in place requires an explicit `--in-place` (which writes a timestamped backup
+first). Pass `--calibration` so each LUT uses its own calibrated gain, plus the same
+`--protect` you used for the profile, so both delivery paths share one tone contract.
 
 ```bash
 python3 scripts/lr-filmsim.py \
   --lut "$FILMSIM_ROOT/luts/look.cube" \
   --out "$FILMSIM_ROOT/rendered" \
   --suffix _look \
-  --pre-gain 1.0 \
+  --calibration "$FILMSIM_ROOT/luts/_calibration.json" \
+  --protect 0.68 \
   --strength 0.75 \
   photo.tif photo.jpg
 ```
@@ -190,7 +195,7 @@ python3 scripts/lut-to-xmp.py \
   --pre-gain 1.0
 ```
 
-Only filenames present in the script's `TASTE` table are processed. Unknown names are skipped because the script has no fallback grain and vignette recipe. The output is a parameterized preset, not a general 3D-LUT conversion.
+Only filenames present in the script's `TASTE` table are processed. Unknown names are skipped because the script has no fallback grain and vignette recipe, and **producing zero files exits non-zero**. The output is a parameterized preset, not a general 3D-LUT conversion.
 
 ### Compare looks on one image
 
@@ -264,13 +269,16 @@ If the source XMP files are no longer present, the installer has no record of wh
 | `scripts/lut-to-xmp.py` | Known top-level `.cube` files to approximate preset XMP | `--group`, `--only`, `--pre-gain`, `--out` | Creates or overwrites XMP files. Unknown stems are skipped. No XML parse or Adobe-host test is performed. |
 | `scripts/qa-luts.py` | Top-level `.cube` and `.png` LUTs to a console report | `--dir`, `--only` | Read-only. Samples a fixed grayscale probe and reports a binary heuristic based on black-to-white contrast and white level. |
 | `scripts/try-looks.py` | One Pillow-readable image plus top-level `.cube` or `.png` LUTs to JPEG previews and a sheet | `--lut-dir`, `--only`, `--out`, `--size`, `--cols`, `--strength`, `--linear-pipeline`, `--pre-gain` | Creates output files and overwrites colliding names. This is visual-review material, not numeric QA. |
-| `scripts/install_ccprofiles.py` | Source XMP directory to Adobe settings directory | `list`, `install`, `remove`, `--src`, `--dest`, `--dry-run` | Install overwrites same-named destination files without backup. Remove unlinks same-named destination files. DCP files are not changed. |
+| `scripts/install_ccprofiles.py` | Source XMP directory to Adobe settings directory | `list`, `install`, `remove`, `--src`, `--dest`, `--dry-run`, `--force`, `--no-backup` | Install backs up anything it overwrites and updates the manifest; a conflicting same-named file aborts the run unless `--force`. Remove is manifest-exact and aborts if any recorded file has changed. DCP files are not changed. |
 | `scripts/install-lr-ccprofiles.sh` | POSIX wrapper around the installer | `--list`, `--remove`; other arguments pass through after the first argument | Same side effects as the Python installer. Defaults to install. |
 | `scripts/apply-look.sh` | Fuzzy LUT name plus files or directories to direct processing | `--ls`, `--out`, `--strength`, `--suffix`, `--linear-pipeline`, `--pre-gain`, `--flat` | May overwrite images because it delegates to `lr-filmsim.py`. Directory search is one level deep. Requires common POSIX tools. |
 | `scripts/fetch_sources.sh` | Named upstream source to downloads or tool installation | `--list`, `rt`, `spectra`, `fuji`, `spektra` | Uses network access. May download hundreds of megabytes, extract with overwrite, create virtual environments, clone repositories, or install tools. |
 | `scripts/curate-rt-halclut.py` | RawTherapee HaldCLUT tree to copied PNG subset | `--src`, `--dst`, `--all`, `--list` | Creates the destination even in `--list` mode and overwrites colliding copied files. It does not run LUT QA. |
 | `scripts/bake-spectral-luts.py` | Built-in spectral film jobs to `.cube` files | `--out`, `--size`, `--only`, `--list`, `--noise` | Imports and executes third-party `spectral_film_lut`; writes in the output directory. `--noise` has no effect. |
+| `scripts/verify-delivery.py` | A delivered profile (plus optional source LUT, calibration, real images) to `verification.json` | `--profile`, `--lut`, `--calibration`, `--pre-gain`, `--protect`, `--images`, `--declare`, `--out` | Read-only except for the output JSON. Every non-null check is computed here; items it cannot compute are listed under `unrecomputed` and are **not** treated as passing. Image-level metrics use the supplied source images as an additional floor, never a more lenient one. |
 | `scripts/selftest.py` | Generated synthetic LUT to temporary calibration and XMP artifacts | `--work` | Without `--work`, removes its temporary directory after success. Checks table MD5 convention, encode/decode error, midpoint, and protected white. |
+| `evals/test_safety.py` | Temporary workspaces to a pass/fail report | — | Asserts: no in-place write without `--in-place`, no silent overwrite, zero output exits non-zero, arbitrary filenames and XML-special characters work, install conflicts abort, rollback is manifest-exact, calibration mismatches are refused, and no document references a script that does not exist. |
+| `evals/test_grader.py` | Builds a synthetic known-good candidate and grades it | — | Asserts the grader gives it full marks, still fails once artifacts are removed, and genuinely recomputes `decode_error_lsb`. |
 | `scripts/selftest.sh` | POSIX wrapper for `scripts/selftest.py` | Arguments pass through | Same validation as the Python self-test. |
 | `evals/make_fixtures.py` | Synthetic generator to committed-style fixture tree | `--out`, `--verify-reproducible` | Writes or overwrites fixtures. Checks defect signatures; reproducibility mode compares two generated trees. |
 | `evals/grade.py` | An external evaluation run directory to console or JSON grading | `--eval`, `--fixtures`, `--no-fixtures`, `--json` | Read-only unless `--json` is given. Decodes candidate profiles and checks declared evaluation artifacts; it is not a general delivery verifier. |
@@ -334,7 +342,9 @@ The [CI workflow](.github/workflows/ci.yml) runs on Ubuntu, macOS, and Windows w
 2. parses every Python entry point with `ast`;
 3. runs `scripts/selftest.py`;
 4. regenerates synthetic fixtures and checks their defect signatures;
-5. verifies that fixture generation is byte-reproducible.
+5. verifies that fixture generation is byte-reproducible;
+6. runs `evals/test_safety.py` (no overwrite, no false success, no ghost scripts);
+7. runs `evals/test_grader.py` (the grader still passes a known-good delivery and still fails without artifacts).
 
 CI does not test third-party downloads, spectral baking, shell wrappers on native Windows, or integration with any photo or video host.
 
@@ -346,13 +356,13 @@ CI does not test third-party downloads, spectral baking, shell wrappers on nativ
 
 Read these before processing original files or installing profiles.
 
-- `lr-filmsim.py` overwrites input files by default and makes no backup. Pass `--out` for non-destructive processing.
-- The profile installer overwrites same-named destination XMP files without backup. Removal deletes same-named destination files based on the current source directory.
+- `lr-filmsim.py` no longer overwrites by default: it requires `--out DIR` or an explicit `--in-place`, and an in-place write is preceded by a timestamped backup under `.filmsim-backups/`. `--overwrite` is required to replace an existing file in the output directory.
+- The profile installer backs up anything it overwrites (under `.filmsim-backup/<timestamp>/`) and records every install in `.filmsim-manifest.json`; it aborts on a conflicting same-named file unless `--force` is given. Removal is manifest-exact: only files whose SHA-256 still matches what was installed are deleted, and a mismatch aborts the whole removal.
 - TIFF writes do not preserve TIFF metadata. Pillow-based writes preserve an ICC profile when one was present, but do not preserve general EXIF or other image metadata.
 - Image processing keeps only the first three channels. Alpha and extra channels are discarded. Grayscale input is expanded to RGB, processed, and reduced to the red channel rather than luminance.
 - The image tools assume normalized RGB values and do not perform ICC color conversion. Results depend on the encoded values presented to them.
 - Generated XMP interpolates filenames, labels, descriptions, and group names directly into XML. XML-sensitive characters such as `&`, `<`, or quotes are not escaped.
-- `lut-to-ccprofile.py` skips unknown stems unless `--allow-unknown` is supplied. It may exit zero after generating no profiles when all discovered files were skipped.
+- `lut-to-ccprofile.py` processes any filename by default; `--only-known` restricts it to the built-in name table. Generating zero profiles exits non-zero, so a skip can no longer be mistaken for success.
 - The profile's group follows `--group`, but the wrapper preset group is currently hard-coded to `胶片模拟 (光谱 LUT)`. Custom groups can therefore differ between the pair.
 - Calibration JSON records `mode` and `protect`, but the encoder only consumes `pre_gain`; it does not enforce matching settings.
 - `--base-profile` can name a custom profile, but `--base-digest` is only used when `--base-profile` is also supplied. The script does not verify either value against installed DCP files.

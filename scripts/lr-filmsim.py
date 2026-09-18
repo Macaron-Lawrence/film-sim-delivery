@@ -31,7 +31,10 @@ del _sys
 
 import argparse
 import os
+import json
+import shutil
 import sys
+import time
 import tempfile
 
 import numpy as np
@@ -294,7 +297,33 @@ def from_float(f: np.ndarray, kind: str) -> np.ndarray:
 
 # ---------------------------------------------------------------- main
 
-def process_one(path: str, lut, lut1d, args) -> str:
+def protect_blend(out: np.ndarray, base: np.ndarray, protect: float) -> np.ndarray:
+    """护高光：与 lut-to-ccprofile.py 的 build_table() 同一套公式。
+
+    按**输入亮度**加权把高光平滑混回原始值：
+        L ≤ protect          → 完全用 LUT
+        protect < L < 1      → smoothstep 过渡
+        L = 1.0              → 输出 = 输入
+    两条交付路径（创意配置文件 / 直接套图）必须用同一个 protect，否则色调契约不一致。
+    """
+    if protect <= 0.0:
+        return out
+    lum = (0.2126 * base[..., 0] + 0.7152 * base[..., 1] + 0.0722 * base[..., 2])
+    t = np.clip((lum - protect) / max(1e-6, 1.0 - protect), 0.0, 1.0)
+    w = 1.0 - (t * t * (3.0 - 2.0 * t))
+    return out * w[..., None] + base * (1.0 - w[..., None])
+
+
+def backup_path_for(path: str) -> str:
+    """原地覆盖前的备份位置：与源文件同目录的 .filmsim-backups/，带时间戳，不覆盖旧备份。"""
+    d = os.path.join(os.path.dirname(os.path.abspath(path)), ".filmsim-backups")
+    os.makedirs(d, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    return os.path.join(d, f"{os.path.basename(path)}.{ts}.bak")
+
+
+def process_one(path: str, lut, lut1d, args) -> tuple:
+    """返回 (target, backup_or_None)。原地模式必定先备份；--out 模式拒绝静默覆盖。"""
     arr, kind = read_image(path)
     meta = None
     if isinstance(kind, tuple):
@@ -307,25 +336,46 @@ def process_one(path: str, lut, lut1d, args) -> str:
         gray = False
     f, scale = to_float(rgb)
     res = apply_lut(f, lut, lut1d, args.strength, args.linear_pipeline, args.pre_gain)
+    res = protect_blend(res, f, args.protect)
     res = from_float(res, scale)
     if gray:
         res = res[:, :, 0]
 
-    if args.out:
+    backup = None
+    if args.in_place:
+        target = path
+        if not args.no_backup:
+            backup = backup_path_for(path)
+            shutil.copy2(path, backup)
+    else:
         os.makedirs(args.out, exist_ok=True)
         base = os.path.basename(path)
         stem, ext = os.path.splitext(base)
         target = os.path.join(args.out, f"{stem}{args.suffix}{ext}")
-    else:
-        target = path
+        # 不静默覆盖：输出目录里已有同名文件时必须显式 --overwrite
+        if os.path.exists(target) and os.path.abspath(target) != os.path.abspath(path):
+            if not args.overwrite:
+                raise FileExistsError(
+                    f"输出已存在：{target}（加 --overwrite 才允许覆盖，或换 --out 目录）")
     write_image(target, res, kind if kind == "tiff" else "pil", meta)
-    return target
+    return target, backup
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="应用 .cube / HaldCLUT 胶片模拟 LUT")
     ap.add_argument("--lut", required=True, help=".cube 或 HaldCLUT PNG")
-    ap.add_argument("--out", help="输出目录（缺省=原地改写，供 Lightroom External Editor 用）")
+    ap.add_argument("--out", help="输出目录。**默认必须提供**：不写 --out 就必须显式写 --in-place")
+    ap.add_argument("--in-place", action="store_true",
+                    help="原地改写输入文件。破坏性操作，必须显式指定；默认会先写时间戳备份")
+    ap.add_argument("--no-backup", action="store_true",
+                    help="原地模式下不写备份（不推荐；只有调用方自己保证有副本时才用）")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="允许覆盖 --out 目录里已存在的同名输出（默认拒绝）")
+    ap.add_argument("--calibration", default=None,
+                    help="calibrate-luts.py 产出的 JSON：按 LUT 文件名取该卷自己的 pre-gain")
+    ap.add_argument("--protect", type=float, default=0.0,
+                    help="护高光阈值 0~1。必须与生成创意配置文件时用的值一致，"
+                         "否则两条路径的色调契约不一致（0=不护）")
     ap.add_argument("--suffix", default="_filmsim", help="--out 模式下的文件名后缀")
     ap.add_argument("--strength", type=float, default=1.0, help="混合强度 0~1")
     ap.add_argument("--linear-pipeline", action="store_true",
@@ -340,6 +390,40 @@ def main(argv=None) -> int:
     if not os.path.exists(args.lut):
         print(f"[lr-filmsim] LUT 不存在：{args.lut}", file=sys.stderr)
         return 2
+
+    # 安全默认：必须显式选择落盘位置。缺省原地改写是过去的行为，会导致用户原图被覆盖。
+    if args.out and args.in_place:
+        print("[lr-filmsim] --out 与 --in-place 互斥，请只选一个", file=sys.stderr)
+        return 2
+    if not args.out and not args.in_place:
+        print("[lr-filmsim] 未指定输出位置。请二选一：\n"
+              "  --out <目录>     写入新目录（推荐，不动原图）\n"
+              "  --in-place       原地改写（会先写备份，需你明确确认）", file=sys.stderr)
+        return 2
+    if args.in_place and args.no_backup:
+        print("[lr-filmsim] 警告：--in-place --no-backup 会不可逆地覆盖原图", file=sys.stderr)
+
+    # 逐卷标定：按 LUT 文件名取该卷自己的 pre-gain（不再共用固定系数）
+    if args.calibration:
+        if not os.path.exists(args.calibration):
+            print(f"[lr-filmsim] 标定文件不存在：{args.calibration}", file=sys.stderr)
+            return 2
+        cal = json.loads(open(args.calibration, encoding="utf-8").read())
+        key = os.path.splitext(os.path.basename(args.lut))[0]
+        entry = cal.get(key)
+        if entry is None:
+            print(f"[lr-filmsim] 标定文件里没有 {key!r} 这一条（共 {len(cal)} 条）；"
+                  f"请对当前 LUT 重新标定", file=sys.stderr)
+            return 2
+        cal_protect = float(entry.get("protect", 0.0))
+        if "protect" in entry and abs(cal_protect - args.protect) > 1e-9:
+            print(f"[lr-filmsim] 护高光阈值不一致：标定时 protect={cal_protect}，"
+                  f"本次 --protect {args.protect}。两条路径必须同口径；"
+                  f"改 --protect {cal_protect} 或重新标定。", file=sys.stderr)
+            return 2
+        args.pre_gain = float(entry["pre_gain"])
+        print(f"[lr-filmsim] 用标定值 pre-gain={args.pre_gain}（来自 {args.calibration} 的 {key}）")
+
     lut, lut1d = load_lut(args.lut)
     n = lut.shape[0]
     if args.info:
@@ -359,8 +443,8 @@ def main(argv=None) -> int:
             rc = 1
             continue
         try:
-            tgt = process_one(p, lut, lut1d, args)
-            print(f"[lr-filmsim] {p} -> {tgt}")
+            tgt, bak = process_one(p, lut, lut1d, args)
+            print(f"[lr-filmsim] {p} -> {tgt}" + (f"（原图备份：{bak}）" if bak else ""))
         except Exception as exc:  # noqa: BLE001
             print(f"[lr-filmsim] 失败 {p}: {exc}", file=sys.stderr)
             rc = 1

@@ -4,6 +4,83 @@ All notable changes to `film-sim-delivery`.
 
 ## [Unreleased]
 
+### Safety defaults (breaking CLI changes)
+
+An external review found that the shipped CLI could destroy user data and that the
+skill's own instructions did not reflect what the code did. Every item below was
+reproduced before being fixed, and `evals/test_safety.py` now asserts it in CI.
+
+- **`lr-filmsim.py` no longer overwrites by default.** Previously, omitting `--out`
+  silently rewrote the input file in place with no backup (reproduced: source JPEG
+  hash changed, zero backups). It now refuses to run without `--out DIR` or an
+  explicit `--in-place`; `--in-place` writes a timestamped backup under
+  `.filmsim-backups/`; an existing output file requires `--overwrite`.
+- **`lr-filmsim.py` reuses the calibration chain.** `--calibration` looks up the
+  per-LUT `pre_gain` by name (it previously had no knowledge of calibration at all —
+  the string did not appear in the file), and `--protect` applies the same
+  highlight-protection blend as `build_table()`, so both delivery paths now share one
+  tone contract.
+- **Installer has a real lifecycle.** `install_ccprofiles.py` gained: a printed plan,
+  conflict detection that **aborts** (reproduced: a user's own same-named file was
+  overwritten with no backup), backups under `.filmsim-backup/<timestamp>/`, a
+  `.filmsim-manifest.json` recording name/SHA-256/source/time, and a manifest-exact
+  `remove` that skips — and aborts on — files that changed since install.
+- **Zero output is a failure.** `lut-to-ccprofile.py`, `lut-to-xmp.py` and
+  `cube-to-hald.py` now exit non-zero when they produce nothing (reproduced: three
+  client-style filenames produced "0 profiles" with exit code 0, which an agent reads
+  as success).
+- **Any filename is processed by default.** `--allow-unknown` is gone from the happy
+  path (`--only-known` is the opt-in restriction). Client names no longer vanish.
+- **XML correctness.** Names with `&`, `<`, `>` and quotes are escaped and every
+  written XMP is re-parsed; failing files are deleted rather than left as half-written
+  trapdoors. Reproduced before the fix: 4 of 6 generated files failed standard XML
+  parsing. While implementing this, escaping the apostrophe broke the payload — the
+  Adobe base85 alphabet contains `'` — so attribute escaping only touches `&`, `<`,
+  `"`, and an assertion now rejects XML-special characters in table data.
+- **Calibration parameters are enforced.** The generator refuses to run when the
+  calibration JSON's `mode`/`protect` disagree with the current invocation
+  (reproduced: `--protect 0.68` with a `protect=0.0` calibration silently produced a
+  delivery that did not match what was calibrated).
+
+### Verification loop
+
+- **New `scripts/verify-delivery.py` produces `verification.json` for real.** The repo
+  previously contained no production code that wrote it — the schema was just an
+  expectation. It recomputes table-ID/MD5, metadata↔base pairing, the gray-scale
+  response, mid-grey and white from the delivered table; `decode_error_lsb` when given
+  the source LUT and calibration; and brightness ratio, top-5 % median, ≥250 share and
+  highlight-detail std when given real images. Anything it cannot compute is listed as
+  `unrecomputed` and is **not** treated as passing.
+- **Image-level thresholds are now relative to the supplied images.** The absolute
+  targets came from the unarchived numbers in §0; run on a real image whose highlights
+  are shallower, they are simply unreachable. The verifier uses the source image as an
+  additional floor and never a more lenient one, and records exactly which floor it
+  applied in `thresholds_used`.
+- **The grader recomputes instead of trusting.** `evals/grade.py` now re-derives
+  `decode_error_lsb` by rebuilding the table from the fixture LUT using the declared
+  parameters, and refuses to count declared image-level metrics as evidence unless real
+  images are present. Its bad-fixture bound was also aligned with the fixture
+  generator's own signature (215 → 220; the generator asserts 0–220, so the grader was
+  strictly harsher than the sample it was grading).
+- New `evals/test_safety.py` (21 assertions) and `evals/test_grader.py`, both wired
+  into CI.
+
+### Documentation
+
+- **`SKILL.md` rewritten around execution constraints.** Phantom scripts removed:
+  `setup-art-bridge.sh`, `make-art-profiles.py` and `make-lr-external-editor-app.sh`
+  were referenced as available but do not exist in this repository; the ART and
+  external-editor flows now say plainly that they must be configured by hand and are
+  not shipped. The hard constraints (no default overwrite, install dry-run first, zero
+  output = failure, arbitrary filenames, XML limits, calibration must match, verify for
+  real) are now §0 at the top; catalogue/coverage material moved down. Every command is
+  written against an absolute `$SKILL_ROOT`, never the current directory.
+- `README.md` / `README.zh.md` updated to describe the new defaults, the new scripts,
+  and the additional CI steps. Both were checked for links, code fences and section
+  parity.
+- Trigger queries extended with the exclusions the description promises (video LUTs,
+  `.dcp` camera matching, ordinary develop presets, video grading, cut-outs).
+
 - **Provenance audit of the numeric claims.** An external review checked every figure in
   the docs against what the repository can actually demonstrate, and the results were
   applied:
@@ -21,7 +98,7 @@ All notable changes to `film-sim-delivery`.
     happened and were sound. Covers the 6-RAW aggregate (0.986 / 247 / 3.31 % / 5.06), the
     0.40–1.67 pre-gain span, and the 209 white-point figure.
   - **What CI does prove, stated explicitly:** on a synthetic fixture, unprotected white
-    output is in 0–220 (`evals/make_fixtures.py`) and the bad sample is ≤ 215
+    output is in 0–220 (`evals/make_fixtures.py`) and the bad sample is ≤ 220
     (`evals/grade.py`). That is a synthetic phenomenon, not a value for real LUTs.
   - **Arithmetic error found while auditing.** `calibration.md` §2 claimed inputs
     200/220/240/255 map to 198/214/237/255 with `--protect 0.68`. Recomputing with the

@@ -45,6 +45,7 @@ import argparse
 import glob
 import importlib.util
 import os
+import sys
 import hashlib
 import struct
 import uuid
@@ -288,6 +289,32 @@ def build_table(cube: Path, div: int, space: str, pre_gain: float,
 
 # ---------------------------------------------------------------- XMP 模板
 
+def xesc(v) -> str:
+    """XML 文本节点转义。文件名/分组名里的 & < > 会直接破坏 XMP——
+    实测 `Warm & Soft.cube` 与 `Client <Final>.cube` 生成的 4 个 XMP 全部无法被标准解析器读取。"""
+    return (str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def xattr(v) -> str:
+    """XML 属性值转义。
+
+    只转义在**双引号属性**里真正会破坏解析的三个字符：`&` `<` `"`。
+    **不能**转义单引号：Adobe 的 base85 字母表里就含 `'`，把表数据里的 `'` 换成
+    `&apos;` 会直接毁掉 RGBTable（实测解码报 zlib error: invalid code）。
+    同理不能把 `>` 之外的东西再包一层。
+    """
+    return xesc(v).replace(">", "&gt;").replace('"', "&quot;")
+
+
+def assert_parsable(path, what: str) -> None:
+    """写盘后用标准 XML 解析器复读。宁可在这里失败，也不要交付一个 LR 读不进去的文件。"""
+    import xml.etree.ElementTree as ET
+    try:
+        ET.parse(str(path))
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"{what} 不是合法 XML：{path}\n  {type(exc).__name__}: {exc}") from exc
+
+
 def look_xmp(name: str, table_id: str, payload: str, base_profile: str, digest: str,
              look_uuid: str, description: str, group: str = "胶片模拟 (光谱 LUT)") -> str:
     return f"""<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00        ">
@@ -296,7 +323,7 @@ def look_xmp(name: str, table_id: str, payload: str, base_profile: str, digest: 
     xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
    crs:PresetType="Look"
    crs:Cluster=""
-   crs:UUID="{look_uuid}"
+   crs:UUID="{xattr(look_uuid)}"
    crs:SupportsAmount="False"
    crs:SupportsColor="True"
    crs:SupportsMonochrome="False"
@@ -313,14 +340,14 @@ def look_xmp(name: str, table_id: str, payload: str, base_profile: str, digest: 
    crs:Version="18.1.1"
    crs:ProcessVersion="15.4"
    crs:ConvertToGrayscale="False"
-   crs:CameraProfile="{base_profile}"
-   crs:CameraProfileDigest="{digest}"
-   crs:RGBTable="{table_id}"
-   crs:Table_{table_id}="{payload}"
+   crs:CameraProfile="{xattr(base_profile)}"
+   crs:CameraProfileDigest="{xattr(digest)}"
+   crs:RGBTable="{xattr(table_id)}"
+   crs:Table_{xattr(table_id)}="{xattr(payload)}"
    crs:HasSettings="True">
    <crs:Name>
     <rdf:Alt>
-     <rdf:li xml:lang="x-default">{name}</rdf:li>
+     <rdf:li xml:lang="x-default">{xesc(name)}</rdf:li>
     </rdf:Alt>
    </crs:Name>
    <crs:ShortName>
@@ -335,12 +362,12 @@ def look_xmp(name: str, table_id: str, payload: str, base_profile: str, digest: 
    </crs:SortName>
    <crs:Group>
     <rdf:Alt>
-     <rdf:li xml:lang="x-default">{group}</rdf:li>
+     <rdf:li xml:lang="x-default">{xesc(group)}</rdf:li>
     </rdf:Alt>
    </crs:Group>
    <crs:Description>
     <rdf:Alt>
-     <rdf:li xml:lang="x-default">{description}</rdf:li>
+     <rdf:li xml:lang="x-default">{xesc(description)}</rdf:li>
     </rdf:Alt>
    </crs:Description>
   </rdf:Description>
@@ -357,7 +384,7 @@ def wrapper_xmp(name: str, look_uuid: str, group: str) -> str:
     xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
    crs:PresetType="Normal"
    crs:Cluster=""
-   crs:UUID="{wuid}"
+   crs:UUID="{xattr(wuid)}"
    crs:SupportsAmount2="False"
    crs:SupportsAmount="False"
    crs:SupportsColor="True"
@@ -377,7 +404,7 @@ def wrapper_xmp(name: str, look_uuid: str, group: str) -> str:
    crs:HasSettings="True">
    <crs:Name>
     <rdf:Alt>
-     <rdf:li xml:lang="x-default">{name}</rdf:li>
+     <rdf:li xml:lang="x-default">{xesc(name)}</rdf:li>
     </rdf:Alt>
    </crs:Name>
    <crs:ShortName>
@@ -392,7 +419,7 @@ def wrapper_xmp(name: str, look_uuid: str, group: str) -> str:
    </crs:SortName>
    <crs:Group>
     <rdf:Alt>
-     <rdf:li xml:lang="x-default">{group}</rdf:li>
+     <rdf:li xml:lang="x-default">{xesc(group)}</rdf:li>
     </rdf:Alt>
    </crs:Group>
    <crs:Description>
@@ -401,9 +428,9 @@ def wrapper_xmp(name: str, look_uuid: str, group: str) -> str:
     </rdf:Alt>
    </crs:Description>
    <crs:Look
-    crs:Name="{name}"
+    crs:Name="{xattr(name)}"
     crs:Amount="1"
-    crs:UUID="{look_uuid}"
+    crs:UUID="{xattr(look_uuid)}"
     crs:SupportsAmount="false"
     crs:SupportsMonochrome="false"
     crs:SupportsOutputReferred="false"
@@ -430,8 +457,10 @@ def main() -> int:
     ap.add_argument("--label", default="", help="追加到名字里的标签，例如 亮度匹配")
     ap.add_argument("--calibration", default=None,
                     help="calibrate-luts.py 产出的 JSON；按 LUT 名取各自的 pre-gain")
+    ap.add_argument("--only-known", action="store_true",
+                    help="只处理内置 NAMES 表里的胶片名；默认处理**任意文件名**")
     ap.add_argument("--allow-unknown", action="store_true",
-                    help="不在 NAMES 表里的 .cube 也用文件名当显示名")
+                    help="（已过时，默认即此行为；保留仅为兼容旧命令行）")
     ap.add_argument("--group", default="胶片模拟 (光谱 LUT)",
                     help="在 LR 配置文件浏览器里显示的分组名")
     ap.add_argument("--protect", type=float, default=0.0,
@@ -447,21 +476,53 @@ def main() -> int:
     if args.only:
         cubes = [c for c in cubes if any(k.lower() in os.path.basename(c).lower() for k in args.only)]
     if not cubes:
-        print("没有 .cube"); return 2
+        print(f"[lut-to-ccprofile] {args.dir} 下没有 .cube / .png / .tif", file=sys.stderr)
+        return 1
 
     calib = {}
-    if args.calibration and os.path.exists(args.calibration):
+    if args.calibration:
         import json as _json
+        if not os.path.exists(args.calibration):
+            print(f"[lut-to-ccprofile] 标定文件不存在：{args.calibration}", file=sys.stderr)
+            return 2
         calib = _json.loads(open(args.calibration, encoding="utf-8").read())
         print(f"读入标定 {len(calib)} 条：{args.calibration}")
 
+        # 标定与生成必须同口径，否则交付的影调不是标定时承诺的那个。
+        # 过去这里只读 pre_gain，protect 不一致也照样生成——由脚本拒绝，而不是靠文档提醒。
+        modes = {str(v.get("mode")) for v in calib.values() if isinstance(v, dict) and v.get("mode")}
+        bad = []
+        for stem, v in sorted(calib.items()):
+            if not isinstance(v, dict):
+                continue
+            if "protect" not in v or "pre_gain" not in v:
+                bad.append((stem, "标定条目缺 protect/pre_gain 字段（旧的标定文件请重跑 calibrate-luts.py）"))
+            elif abs(float(v["protect"]) - args.protect) > 1e-9:
+                bad.append((stem, f"标定时 protect={v['protect']}，本次 --protect {args.protect}"))
+        if modes and len(modes) > 1:
+            bad.append(("(整份标定)", f"标定文件里混用了多种 mode：{sorted(modes)}"))
+        if bad:
+            print(f"\n✗ 标定参数与本次生成不一致，已中止，未生成任何文件：", file=sys.stderr)
+            for stem, why in bad[:10]:
+                print(f"    {stem}: {why}", file=sys.stderr)
+            if len(bad) > 10:
+                print(f"    …以及另外 {len(bad)-10} 条", file=sys.stderr)
+            print(f"  标定与生成必须用同一个 --mode/--protect。"
+                  f"请按本次的 --protect {args.protect} 重跑标定，或把生成命令改成标定时用的值。",
+                  file=sys.stderr)
+            return 1
+        if modes:
+            print(f"  标定口径核对通过：mode={sorted(modes)[0]}，protect={args.protect}")
+
     spaces = ["linear", "display"] if args.space == "both" else [args.space]
-    made = []
+    made, skipped_known, failed = [], [], []
     for c in cubes:
         stem = os.path.splitext(os.path.basename(c))[0]
-        if stem not in NAMES and not args.allow_unknown:
+        if stem not in NAMES and args.only_known:
+            skipped_known.append(stem)
             continue
         for sp in spaces:
+          try:
             gain = float(calib.get(stem, {}).get("pre_gain", args.pre_gain))
             colors = build_table(Path(c), args.divisions, sp, gain, args.protect)
             blob = encode_table(colors, args.divisions, META[sp])
@@ -474,20 +535,48 @@ def main() -> int:
             look_uuid = uuid.uuid4().hex.upper()
             tid = table_id(blob)
             payload = b85_encode(blob)
+            assert not any(ch in payload for ch in '&<>"'), \
+                "base85 表数据里出现了 XML 特殊字符——转义会毁掉表，编码器需先修正"
             desc = (f"spektrafilm 光谱胶片 LUT → Adobe 创意配置文件；"
                     f"{args.divisions}^3 网格，输入空间={'线性' if sp=='linear' else '显示域'}，"
                     f"已做曝光定位补偿")
             base = args.base_profile if args.base_profile else BASE[sp]
             digest = args.base_digest if args.base_profile else (BASE_DIGEST if sp == "linear" else "")
-            (out_dir / f"{name}.xmp").write_text(
-                look_xmp(name, tid, payload, base, digest, look_uuid, desc,
-                         args.group), encoding="utf-8")
-            (out_dir / f"{name} wrapper.xmp").write_text(
-                wrapper_xmp(name, look_uuid, "胶片模拟 (光谱 LUT)"), encoding="utf-8")
+            prof_path = out_dir / f"{name}.xmp"
+            wrap_path = out_dir / f"{name} wrapper.xmp"
+            prof_path.write_text(look_xmp(name, tid, payload, base, digest, look_uuid,
+                                          desc, args.group), encoding="utf-8")
+            wrap_path.write_text(wrapper_xmp(name, look_uuid, args.group),
+                                 encoding="utf-8")
+            # 生成即验证：两个文件都必须能被标准 XML 解析器读回
+            assert_parsable(prof_path, "创意配置文件")
+            assert_parsable(wrap_path, "wrapper 预设")
             made.append((name, len(payload), err))
             print(f"✓ {name:30s} pre-gain={gain:.3f}  {len(payload)/1024:5.0f}KB  基底={base}"[:112])
+          except Exception as exc:  # noqa: BLE001
+            failed.append((stem, f"{type(exc).__name__}: {exc}"))
+            print(f"✗ {stem}: {exc}", file=sys.stderr)
+            # 不留半成品：失败的文件从输出目录清掉，免得后续 install 把坏文件装进 Adobe
+            for bad in out_dir.glob(f"*{stem}*.xmp"):
+                try:
+                    bad.unlink()
+                except OSError:
+                    pass
     print(f"\n生成 {len(made)} 个创意配置文件（含 wrapper 预设）→ {out_dir}")
-    print("安装： scripts/install-lr-ccprofiles.sh")
+    if failed:
+        print(f"✗ {len(failed)} 个失败：", file=sys.stderr)
+        for stem, why in failed[:5]:
+            print(f"    {stem}: {why}", file=sys.stderr)
+    if skipped_known:
+        print(f"（--only-known：按内置 NAMES 表跳过了 {len(skipped_known)} 个："
+              f"{skipped_known[:5]}…）")
+    # 零产物必须是失败：退出码 0 + "生成 0 个" 会让 Agent 误报完成。
+    if not made:
+        print("\n✗ 没有生成任何配置文件——这不算成功，请检查输入目录与参数。", file=sys.stderr)
+        return 1
+    if failed:
+        return 1
+    print("安装： python3 scripts/install_ccprofiles.py list   # 先看清单，再 install")
     return 0
 
 

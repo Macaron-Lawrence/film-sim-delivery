@@ -35,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+import sys
 
 HERE = Path(__file__).resolve().parent
 
@@ -111,19 +112,26 @@ def main() -> int:
     if args.only:
         cubes = [c for c in cubes if any(k.lower() in os.path.basename(c).lower() for k in args.only)]
     if not cubes:
-        print("没有 .cube")
-        return 2
+        print(f"[cube-to-hald] {args.dir} 下没有 .cube", file=sys.stderr)
+        return 1
 
+    made = 0
     for c in cubes:
         name = os.path.splitext(os.path.basename(c))[0]
         if name.startswith("identity"):
             continue
         img = cube_to_hald(Path(c), args.level, args.pre_gain)
+        made += 1
         suffix = "_hald%d.png" % args.level if abs(args.pre_gain - 1.0) > 1e-6 else "_hald%d_raw.png" % args.level
         dst = out_dir / (name + suffix)
         img.save(dst)
         print(f"{os.path.basename(c):28s} -> {dst.name}  ({img.width}×{img.height})")
-    print("\n用法：ART 的 Film Simulation 工具里选择这些 PNG（CLUT 目录已指向 <root>/art/clut）")
+    print(f"\n生成 {made} 个 HaldCLUT → {out_dir}")
+    if not made:
+        print("\n✗ 没有生成任何文件——全部被跳过（identity 前缀）或输入为空，不算成功。",
+              file=sys.stderr)
+        return 1
+    print("用法：ART 的 Film Simulation 工具里选择这些 PNG（CLUT 目录已指向 <root>/art/clut）")
     return 0
 
 
