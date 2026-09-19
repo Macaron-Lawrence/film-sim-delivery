@@ -2,7 +2,11 @@
 
 All notable changes to `film-sim-delivery`.
 
-## [Unreleased]
+## [0.4.0] — 2026-09-19   *breaking: CLI defaults changed*
+
+> **升级前请读**：`lr-filmsim.py` 不再默认原地覆盖，必须给 `--out` 或显式 `--in-place`；
+> 安装器遇到同名冲突会中止（需 `--force`），并写备份与 manifest；三个生成器零产物时返回非零退出码。
+> 依赖旧行为（不带参数就覆盖）的脚本需要改。
 
 ### Safety defaults (breaking CLI changes)
 
