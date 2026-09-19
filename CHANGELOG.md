@@ -138,6 +138,41 @@ reproduced before being fixed, and `evals/test_safety.py` now asserts it in CI.
   `evals/make_fixtures.py --verify-reproducible` yields the same tree hash as CI
   (`a83a297b51f8cee3`) on Python 3.9.6 and 3.13.15 alike.
 
+## [0.4.1] — 2026-09-19
+
+Follow-up cleanup: the 0.4.0 round fixed the scripts and `SKILL.md`, but several
+documents kept describing the old behaviour. Every item below was a direct
+contradiction with the code or with another part of the same document.
+
+- `references/calibration.md` §0 said the repo had no code to recompute the
+  image-level metrics. That stopped being true when `verify-delivery.py --images`
+  landed, so the paragraph now says both things at once: the metrics **can** be
+  recomputed from images you supply, while the six RAW files behind the historical
+  aggregate were never archived, so **that** older result still cannot be
+  reproduced — a fresh `--images` run measures your images, it does not re-check
+  the old numbers.
+- The READMEs claimed "no production command automatically creates
+  `verification.json`". Replaced with what the verifier actually does, including the
+  part that matters: without `--images` it does not compute the image-level metrics
+  at all, so an example value must never be presented as this delivery's measurement.
+- README statements that contradicted the shipped code were all corrected, not just
+  the ones reported: `--allow-unknown` was still documented as required for arbitrary
+  filenames (it is the default now), `lr-filmsim.py` was still described as
+  overwriting in place by default, `lut-to-xmp.py` as doing no XML validation,
+  generated XMP as not escaping special characters, the encoder as not enforcing
+  calibration `mode`/`protect`, and the wrapper preset group as hard-coded. The one
+  remaining limitation was reworded so it is visibly still true (numeric range
+  validation is not complete) rather than reading as a stale claim.
+- `scripts/calibrate-luts.py` and `references/pitfalls.md` quoted per-source
+  calibration figures as plain facts. They now say those came from early documents
+  that were never archived, must not be reused, and that the current input has to be
+  measured — which is what the script exists to do.
+- `references/verification-schema.md`'s example block **was** the historical number
+  set (0.977 / 247.1 / 3.31 / 5.06), which is how those values came to be quoted as
+  measurements in the first place. The example now uses neutral placeholder values,
+  with a note directly above it, so the path that caused the confusion is closed
+  rather than just annotated.
+
 ## [0.3.1]
 
 - **Windows fix.** Every Python entry point died with

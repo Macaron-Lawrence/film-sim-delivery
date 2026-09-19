@@ -81,7 +81,7 @@ python3 -m venv .venv
 
 ## Quick start with an arbitrary LUT library
 
-The encoder contains a hard-coded `NAMES` mapping used for display names. For arbitrary filenames, `--allow-unknown` is required. Without it, recognized input files whose stems are absent from `NAMES` are silently skipped. If at least one supported input file was discovered, the command can report that it generated zero profiles and still exit successfully. Check the generated count and output directory.
+The encoder contains a hard-coded `NAMES` mapping used for display names, but **it processes any filename by default** — that mapping only supplies a nicer display name. `--only-known` restricts it to that table. Generating zero profiles is a failure, not a quiet success: the command exits non-zero and deletes any partially written file, so a silent skip cannot be mistaken for a completed conversion.
 
 The scripts only scan the specified directory itself, not subdirectories. This example uses an explicit working library:
 
@@ -106,7 +106,7 @@ python3 scripts/lut-to-ccprofile.py \
   --space display \
   --protect 0.68 \
   --group "Film Simulation" \
-  --allow-unknown
+  #（不需要 --allow-unknown：任意文件名默认都处理；要按内置名表过滤才加 --only-known）
 ```
 
 Use the same `--protect` value for calibration and profile generation. The encoder reads `pre_gain` from the calibration JSON, but it does not verify the JSON's recorded `mode` or `protect` values.
@@ -262,11 +262,11 @@ If the source XMP files are no longer present, the installer has no record of wh
 
 | Entry point | Input and output | Key options | Side effects and validation |
 |---|---|---|---|
-| `scripts/lut-to-ccprofile.py` | Top-level `.cube`, `.png`, or `.tif` LUTs to profile XMP plus wrapper XMP | `--dir`, `--out`, `--only`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--allow-unknown`, `--group`, `--protect` | Creates the output directory and overwrites same-named XMP files. Internally decodes each encoded table and requires less than one 16-bit LSB error. Does not test an Adobe host. |
+| `scripts/lut-to-ccprofile.py` | Top-level `.cube`, `.png`, or `.tif` LUTs to profile XMP plus wrapper XMP | `--dir`, `--out`, `--only`, `--only-known`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--group`, `--protect` | Processes any filename by default. Creates the output directory and overwrites same-named XMP files. Decodes each encoded table (less than one 16-bit LSB error) and re-parses every XMP it writes, deleting files that fail. Refuses to run when the calibration's `mode`/`protect` disagree with the invocation, and **exits non-zero on zero output**. Does not test an Adobe host. |
 | `scripts/calibrate-luts.py` | Top-level LUT files to JSON | `--mode`, `--protect`, `--merge`, `--out` | Writes JSON. Bisection assumes score is monotonic over gain 0.10 to 4.0 and does not check bracketing. `--merge` preserves unrelated existing records. |
-| `scripts/lr-filmsim.py` | `.cube` or HaldCLUT plus images to processed images | `--out`, `--suffix`, `--strength`, `--linear-pipeline`, `--pre-gain`, `--info` | Default is destructive in-place replacement with no backup. Uses an atomic temporary-file replace. Argument ranges are not enforced. |
+| `scripts/lr-filmsim.py` | `.cube` or HaldCLUT plus images to processed images | `--out`, `--in-place`, `--no-backup`, `--overwrite`, `--calibration`, `--protect`, `--suffix`, `--strength`, `--linear-pipeline`, `--pre-gain`, `--info` | Refuses to run without `--out` or an explicit `--in-place`; in-place writes are backed up under `.filmsim-backups/`; an existing output needs `--overwrite`. `--calibration` reuses the per-LUT gain and `--protect` mirrors the profile path. Uses an atomic temporary-file replace. Argument ranges are not enforced. |
 | `scripts/cube-to-hald.py` | Top-level `.cube` files to HaldCLUT PNG | `--level`, `--pre-gain`, `--only`, `--out` | Creates output directory and overwrites same-named PNGs. No round-trip comparison is performed. |
-| `scripts/lut-to-xmp.py` | Known top-level `.cube` files to approximate preset XMP | `--group`, `--only`, `--pre-gain`, `--out` | Creates or overwrites XMP files. Unknown stems are skipped. No XML parse or Adobe-host test is performed. |
+| `scripts/lut-to-xmp.py` | Known top-level `.cube` files to approximate preset XMP | `--group`, `--only`, `--pre-gain`, `--out` | Creates or overwrites XMP files. Unknown stems are skipped, and producing zero files exits non-zero. Names are XML-escaped and each written file is re-parsed. No Adobe-host test is performed. |
 | `scripts/qa-luts.py` | Top-level `.cube` and `.png` LUTs to a console report | `--dir`, `--only` | Read-only. Samples a fixed grayscale probe and reports a binary heuristic based on black-to-white contrast and white level. |
 | `scripts/try-looks.py` | One Pillow-readable image plus top-level `.cube` or `.png` LUTs to JPEG previews and a sheet | `--lut-dir`, `--only`, `--out`, `--size`, `--cols`, `--strength`, `--linear-pipeline`, `--pre-gain` | Creates output files and overwrites colliding names. This is visual-review material, not numeric QA. |
 | `scripts/install_ccprofiles.py` | Source XMP directory to Adobe settings directory | `list`, `install`, `remove`, `--src`, `--dest`, `--dry-run`, `--force`, `--no-backup` | Install backs up anything it overwrites and updates the manifest; a conflicting same-named file aborts the run unless `--force`. Remove is manifest-exact and aborts if any recorded file has changed. DCP files are not changed. |
@@ -348,7 +348,9 @@ The [CI workflow](.github/workflows/ci.yml) runs on Ubuntu, macOS, and Windows w
 
 CI does not test third-party downloads, spectral baking, shell wrappers on native Windows, or integration with any photo or video host.
 
-`evals/grade.py` is narrower than a full verifier. For its delivery evaluation, it independently decodes an embedded RGBTable, recomputes its MD5, reads metadata and base-profile fields, evaluates grayscale response, and checks wrapper UUID matching. It compares recomputed grayscale, midpoint, and white values with declarations where implemented. It accepts declared `decode_error_lsb`, brightness ratio, and image-level highlight metrics against thresholds; it does not independently recompute all of those metrics from source images. No production command automatically creates `verification.json`.
+`scripts/verify-delivery.py` is what creates `verification.json`, and everything it marks as computed is computed from the artifacts (table-ID/MD5, metadata↔base pairing, grey-scale response, mid-grey and white; plus `decode_error_lsb` when you pass the source LUT and `--calibration`, and the four image-level metrics when you pass `--images`). **Without `--images` it does not compute the image-level metrics at all** — they are reported as `null` and listed under `unrecomputed`, so an example value or a number carried over from an earlier run must never be presented as this delivery's measurement.
+
+`evals/grade.py` is narrower than a full verifier. For its delivery evaluation it independently decodes an embedded RGBTable, recomputes its MD5, reads metadata and base-profile fields, evaluates grey-scale response, checks wrapper UUID matching, and re-derives `decode_error_lsb` by rebuilding the table from the fixture LUT using the declared parameters — rather than trusting the declared value. It will not treat declared image-level metrics as evidence unless real images are supplied.
 
 [`references/verification-schema.md`](references/verification-schema.md) describes the evaluation artifact expected by the grader. Treat it as a manual or external evaluation contract, not output promised by the encoder.
 
@@ -361,12 +363,12 @@ Read these before processing original files or installing profiles.
 - TIFF writes do not preserve TIFF metadata. Pillow-based writes preserve an ICC profile when one was present, but do not preserve general EXIF or other image metadata.
 - Image processing keeps only the first three channels. Alpha and extra channels are discarded. Grayscale input is expanded to RGB, processed, and reduced to the red channel rather than luminance.
 - The image tools assume normalized RGB values and do not perform ICC color conversion. Results depend on the encoded values presented to them.
-- Generated XMP interpolates filenames, labels, descriptions, and group names directly into XML. XML-sensitive characters such as `&`, `<`, or quotes are not escaped.
+- Generated XMP escapes filenames, labels, descriptions and group names, and every written file is re-parsed with a standard XML parser; a file that fails is deleted rather than left behind. Only `&`, `<`, `>` and `"` are escaped in attributes — deliberately not the apostrophe, because the Adobe base85 alphabet used for table data contains one.
 - `lut-to-ccprofile.py` processes any filename by default; `--only-known` restricts it to the built-in name table. Generating zero profiles exits non-zero, so a skip can no longer be mistaken for success.
-- The profile's group follows `--group`, but the wrapper preset group is currently hard-coded to `胶片模拟 (光谱 LUT)`. Custom groups can therefore differ between the pair.
-- Calibration JSON records `mode` and `protect`, but the encoder only consumes `pre_gain`; it does not enforce matching settings.
+- The profile and its wrapper preset both use `--group`, so a custom group applies to the pair consistently.
+- Calibration JSON records `mode` and `protect`, and the encoder **does** enforce them: a calibration entry whose `protect` differs from the invocation, or that lacks `protect`/`pre_gain`, aborts generation before anything is written. Entry `mode` values are also required to be consistent across the file.
 - `--base-profile` can name a custom profile, but `--base-digest` is only used when `--base-profile` is also supplied. The script does not verify either value against installed DCP files.
-- `--protect`, `--strength`, `--pre-gain`, `--divisions`, and several size values lack complete range validation. Bad values can produce invalid output, extreme output, or runtime failures.
+- `--protect`, `--strength`, `--pre-gain`, `--divisions`, and several size values still lack complete range validation. Bad values can produce invalid output, extreme output, or runtime failures. (The safety fixes covered destructive defaults and contract mismatches, not every numeric range.)
 - HaldCLUT TIFF input is accepted by some core paths, while QA and contact-sheet discovery only include `.cube` and `.png`. Format coverage is not identical across scripts.
 - `scripts/bake-spectral-luts.py --noise` is currently unused.
 - The repository includes host guidance in [`references/hosts.md`](references/hosts.md), but that document is not a substitute for testing the exact host version, operating system, camera, and base profile you plan to ship.
