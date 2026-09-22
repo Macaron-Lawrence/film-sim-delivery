@@ -1,7 +1,163 @@
 # Changelog
 
 All notable changes to `film-sim-delivery`.
+## [0.6.0] — 2026-09-22   *feature: look strength*
 
+Asked whether LUT strength could be dialled back, and whether baking a 50 % LUT per
+strength into separate preset folders was the right way to do it. It works, but it is
+the expensive option, and the cheap one was already half-present in the output.
+
+What the audit found: our wrapper presets are structurally identical to Adobe's and
+Fujifilm's shipped ones — including `crs:Amount="1"`, the field that carries how
+strongly a Look is applied. The strength mechanism was already in our files, pinned
+at 100 %, and the preset-level `SupportsAmount2` was set to `False` exactly as the
+official profiles set it.
+
+Three ways to control strength, all now implemented and tested:
+
+- `--bake-strength s` bakes the intensity into the table:
+  `out = s·LUT + (1−s)·input`, in the look's own space. Verifiable, frozen after the
+  fact, one full table per strength.
+- `--amounts 1,0.75,0.5,0.25` emits extra wrapper presets that share the **same**
+  embedded table and the same Look UUID, differing only in `crs:Amount`. This is the
+  "50 % preset folder" idea at ~1.7 KB per preset instead of a duplicated 76 KB table
+  per strength, and it is the structure Adobe/Fujifilm already use.
+- `--supports-amount` sets `SupportsAmount`/`SupportsAmount2` to `True` on the preset,
+  which is the documented way to make a host offer a strength slider (they are the
+  flags for Lightroom's Amount control; `SupportsAmount` was superseded by
+  `SupportsAmount2` from Camera Raw 1.4). Adobe's own profiles ship `False`, and no
+  host was available to confirm the slider appears, so this is opt-in and labelled as
+  unverified rather than presented as working.
+
+`lr-filmsim.py --strength` already existed for the direct path and uses the same
+blend, so `--bake-strength 0.5` and `--strength 0.5` agree.
+
+New `evals/test_strength.py` (13 assertions, in CI) locks this down: baked strength
+must equal `s·LUT + (1−s)·input` within 1 LSB, must actually differ from 100 %,
+must keep white at 255, the multi-amount presets must share one table and one UUID,
+`--supports-amount` must flip only the preset-level flags, and the direct-path
+`--strength` must match the baked math.
+## [0.5.0] — 2026-09-22   *breaking: install rollback, verdict semantics, and a `--mode` contract*
+
+Follow-up to an external review of 0.4.1. Five issues, all reproduced first.
+
+### Install / rollback (P0)
+
+`remove` only deleted the files it had installed; it never put back the file it had
+overwritten. So "rollback" meant "undo the install", not "restore the previous
+state" — anyone reading "manifest-exact rollback" would reasonably expect their own
+profile to come back.
+
+`remove` now rolls back to the pre-install state: files that were overwritten are
+**restored from their backup** after checking the recorded hash, files that were
+newly added are deleted, and if any recorded file was modified after installing (or
+its backup is missing) the whole removal aborts rather than leaving a half-finished
+state. `--dry-run` prints which files will be restored and which will be deleted.
+
+### Verification verdict (P0)
+
+`verify-delivery.py` could print `verdict: pass` while image-level metrics were never
+computed — exactly the "not recomputed is not a pass" rule it was built to enforce.
+
+The verdict is now three-valued and the exit code follows it:
+
+| verdict | meaning | exit |
+|---|---|---|
+| `pass` | everything required was recomputed and passed | 0 |
+| `partial` | computed checks passed, some metrics lacked input (**not a pass**) | 3 |
+| `fail` | a check failed, or the run required images (`--require-images`) and got none | 1 |
+
+`--allow-partial` is the only way to make `partial` exit zero.
+
+### Grade thresholds (P1, and a documentation contradiction)
+
+The docs said the source-image baseline was "never more lenient" than the absolute
+target; the code used `min(absolute, fraction × source)`, which *is* more lenient
+whenever the source meets the absolute target. The intent is now decided and both
+sides say the same thing: **two-stage** — if the supplied images meet the absolute
+target, the absolute target applies (stricter); only when they do not does the
+retention floor apply. Either way the output may not be worse than the input, and
+which branch was used is recorded in `thresholds_used.basis`.
+
+### Calibration `mode` contract (P1)
+
+0.4.0 enforced `protect` but not `mode`: generation never had to declare which mode
+its calibration was produced with, so half the contract was unenforceable. Using
+`--calibration` now requires an explicit `--mode`, which must match the recorded
+mode; a mismatch aborts. This immediately broke three of our own call sites
+(`selftest.py`, `test_safety.py`, `test_grader.py`) — which is what a contract
+actually taking effect looks like.
+
+### Range validation (P1)
+
+`--divisions` (1–64), `--protect` (0 ≤ p < 1), `--pre-gain` (0.01–8.0) and
+`--strength` (0–1) are now rejected at the entry point instead of producing invalid
+or extreme output. Size values in the preview helpers and `cube-to-hald.py --level`
+remain unchecked.
+
+### Glob injection in failure cleanup (found while auditing)
+
+The generator's cleanup after a failed encode used `glob("*{stem}*.xmp")`, so a stem
+containing `*`, `?` or `[ ]` widened the pattern: with `stem="*"` it matched and
+deleted *other* deliveries in the output directory (reproduced). Cleanup now unlinks
+only the two exact paths it just wrote.
+
+### Evals now test behaviour, not just artifacts
+
+- `eval 0`/`eval 2` asked for image-level metrics while shipping no image, which left
+  a candidate three bad options: invent numbers, copy the example, or fail. The
+  fixtures now include a deterministic test photo, and **the grader recomputes the
+  four image-level metrics itself** from that photo; declared values are only
+  cross-checked. A declared value that disagrees with the recomputation fails.
+- Two new safety-behaviour tasks: `eval 3` (a user demanding in-place replacement
+  with no backup) and `eval 4` (a user demanding an unconfirmed overwrite of their
+  own profile). Both are graded from filesystem consequences — original hashes,
+  backups, manifest — not from what the agent says it did. Verified to discriminate:
+  the unsafe behaviours score 2/4 and 0/4, the safe ones 4/4.
+- `test_safety.py` grew from 22 to 34 assertions: SKILL.md must still contain every
+  execution gate, no SKILL.md command may rely on the current working directory, the
+  README may not regress to any of the previously-corrected claims, `remove` must
+  actually restore, and a missing backup must abort.
+
+The test photo is deliberately built so the metric can discriminate rather than
+produce knife-edge noise: most ≥250 pixels are genuinely near-white, because
+protect=0.68 pushes inputs below ~250.6 under 250 — a fixture that spreads a linear
+ramp across the highlight range would lose ~23 % of its ≥250 share for reasons that
+have nothing to do with delivery quality.
+## [0.4.1] — 2026-09-19
+
+Follow-up cleanup: the 0.4.0 round fixed the scripts and `SKILL.md`, but several
+documents kept describing the old behaviour. Every item below was a direct
+contradiction with the code or with another part of the same document.
+
+- `references/calibration.md` §0 said the repo had no code to recompute the
+  image-level metrics. That stopped being true when `verify-delivery.py --images`
+  landed, so the paragraph now says both things at once: the metrics **can** be
+  recomputed from images you supply, while the six RAW files behind the historical
+  aggregate were never archived, so **that** older result still cannot be
+  reproduced — a fresh `--images` run measures your images, it does not re-check
+  the old numbers.
+- The READMEs claimed "no production command automatically creates
+  `verification.json`". Replaced with what the verifier actually does, including the
+  part that matters: without `--images` it does not compute the image-level metrics
+  at all, so an example value must never be presented as this delivery's measurement.
+- README statements that contradicted the shipped code were all corrected, not just
+  the ones reported: `--allow-unknown` was still documented as required for arbitrary
+  filenames (it is the default now), `lr-filmsim.py` was still described as
+  overwriting in place by default, `lut-to-xmp.py` as doing no XML validation,
+  generated XMP as not escaping special characters, the encoder as not enforcing
+  calibration `mode`/`protect`, and the wrapper preset group as hard-coded. The one
+  remaining limitation was reworded so it is visibly still true (numeric range
+  validation is not complete) rather than reading as a stale claim.
+- `scripts/calibrate-luts.py` and `references/pitfalls.md` quoted per-source
+  calibration figures as plain facts. They now say those came from early documents
+  that were never archived, must not be reused, and that the current input has to be
+  measured — which is what the script exists to do.
+- `references/verification-schema.md`'s example block **was** the historical number
+  set (0.977 / 247.1 / 3.31 / 5.06), which is how those values came to be quoted as
+  measurements in the first place. The example now uses neutral placeholder values,
+  with a note directly above it, so the path that caused the confusion is closed
+  rather than just annotated.
 ## [0.4.0] — 2026-09-19   *breaking: CLI defaults changed*
 
 > **升级前请读**：`lr-filmsim.py` 不再默认原地覆盖，必须给 `--out` 或显式 `--in-place`；
@@ -137,167 +293,6 @@ reproduced before being fixed, and `evals/test_safety.py` now asserts it in CI.
   `pip install -r requirements.txt` → `scripts/selftest.py` passes, and
   `evals/make_fixtures.py --verify-reproducible` yields the same tree hash as CI
   (`a83a297b51f8cee3`) on Python 3.9.6 and 3.13.15 alike.
-
-## [0.6.0] — 2026-09-22   *feature: look strength*
-
-Asked whether LUT strength could be dialled back, and whether baking a 50 % LUT per
-strength into separate preset folders was the right way to do it. It works, but it is
-the expensive option, and the cheap one was already half-present in the output.
-
-What the audit found: our wrapper presets are structurally identical to Adobe's and
-Fujifilm's shipped ones — including `crs:Amount="1"`, the field that carries how
-strongly a Look is applied. The strength mechanism was already in our files, pinned
-at 100 %, and the preset-level `SupportsAmount2` was set to `False` exactly as the
-official profiles set it.
-
-Three ways to control strength, all now implemented and tested:
-
-- `--bake-strength s` bakes the intensity into the table:
-  `out = s·LUT + (1−s)·input`, in the look's own space. Verifiable, frozen after the
-  fact, one full table per strength.
-- `--amounts 1,0.75,0.5,0.25` emits extra wrapper presets that share the **same**
-  embedded table and the same Look UUID, differing only in `crs:Amount`. This is the
-  "50 % preset folder" idea at ~1.7 KB per preset instead of a duplicated 76 KB table
-  per strength, and it is the structure Adobe/Fujifilm already use.
-- `--supports-amount` sets `SupportsAmount`/`SupportsAmount2` to `True` on the preset,
-  which is the documented way to make a host offer a strength slider (they are the
-  flags for Lightroom's Amount control; `SupportsAmount` was superseded by
-  `SupportsAmount2` from Camera Raw 1.4). Adobe's own profiles ship `False`, and no
-  host was available to confirm the slider appears, so this is opt-in and labelled as
-  unverified rather than presented as working.
-
-`lr-filmsim.py --strength` already existed for the direct path and uses the same
-blend, so `--bake-strength 0.5` and `--strength 0.5` agree.
-
-New `evals/test_strength.py` (13 assertions, in CI) locks this down: baked strength
-must equal `s·LUT + (1−s)·input` within 1 LSB, must actually differ from 100 %,
-must keep white at 255, the multi-amount presets must share one table and one UUID,
-`--supports-amount` must flip only the preset-level flags, and the direct-path
-`--strength` must match the baked math.
-
-## [0.5.0] — 2026-09-22   *breaking: install rollback, verdict semantics, and a `--mode` contract*
-
-Follow-up to an external review of 0.4.1. Five issues, all reproduced first.
-
-### Install / rollback (P0)
-
-`remove` only deleted the files it had installed; it never put back the file it had
-overwritten. So "rollback" meant "undo the install", not "restore the previous
-state" — anyone reading "manifest-exact rollback" would reasonably expect their own
-profile to come back.
-
-`remove` now rolls back to the pre-install state: files that were overwritten are
-**restored from their backup** after checking the recorded hash, files that were
-newly added are deleted, and if any recorded file was modified after installing (or
-its backup is missing) the whole removal aborts rather than leaving a half-finished
-state. `--dry-run` prints which files will be restored and which will be deleted.
-
-### Verification verdict (P0)
-
-`verify-delivery.py` could print `verdict: pass` while image-level metrics were never
-computed — exactly the "not recomputed is not a pass" rule it was built to enforce.
-
-The verdict is now three-valued and the exit code follows it:
-
-| verdict | meaning | exit |
-|---|---|---|
-| `pass` | everything required was recomputed and passed | 0 |
-| `partial` | computed checks passed, some metrics lacked input (**not a pass**) | 3 |
-| `fail` | a check failed, or the run required images (`--require-images`) and got none | 1 |
-
-`--allow-partial` is the only way to make `partial` exit zero.
-
-### Grade thresholds (P1, and a documentation contradiction)
-
-The docs said the source-image baseline was "never more lenient" than the absolute
-target; the code used `min(absolute, fraction × source)`, which *is* more lenient
-whenever the source meets the absolute target. The intent is now decided and both
-sides say the same thing: **two-stage** — if the supplied images meet the absolute
-target, the absolute target applies (stricter); only when they do not does the
-retention floor apply. Either way the output may not be worse than the input, and
-which branch was used is recorded in `thresholds_used.basis`.
-
-### Calibration `mode` contract (P1)
-
-0.4.0 enforced `protect` but not `mode`: generation never had to declare which mode
-its calibration was produced with, so half the contract was unenforceable. Using
-`--calibration` now requires an explicit `--mode`, which must match the recorded
-mode; a mismatch aborts. This immediately broke three of our own call sites
-(`selftest.py`, `test_safety.py`, `test_grader.py`) — which is what a contract
-actually taking effect looks like.
-
-### Range validation (P1)
-
-`--divisions` (1–64), `--protect` (0 ≤ p < 1), `--pre-gain` (0.01–8.0) and
-`--strength` (0–1) are now rejected at the entry point instead of producing invalid
-or extreme output. Size values in the preview helpers and `cube-to-hald.py --level`
-remain unchecked.
-
-### Glob injection in failure cleanup (found while auditing)
-
-The generator's cleanup after a failed encode used `glob("*{stem}*.xmp")`, so a stem
-containing `*`, `?` or `[ ]` widened the pattern: with `stem="*"` it matched and
-deleted *other* deliveries in the output directory (reproduced). Cleanup now unlinks
-only the two exact paths it just wrote.
-
-### Evals now test behaviour, not just artifacts
-
-- `eval 0`/`eval 2` asked for image-level metrics while shipping no image, which left
-  a candidate three bad options: invent numbers, copy the example, or fail. The
-  fixtures now include a deterministic test photo, and **the grader recomputes the
-  four image-level metrics itself** from that photo; declared values are only
-  cross-checked. A declared value that disagrees with the recomputation fails.
-- Two new safety-behaviour tasks: `eval 3` (a user demanding in-place replacement
-  with no backup) and `eval 4` (a user demanding an unconfirmed overwrite of their
-  own profile). Both are graded from filesystem consequences — original hashes,
-  backups, manifest — not from what the agent says it did. Verified to discriminate:
-  the unsafe behaviours score 2/4 and 0/4, the safe ones 4/4.
-- `test_safety.py` grew from 22 to 34 assertions: SKILL.md must still contain every
-  execution gate, no SKILL.md command may rely on the current working directory, the
-  README may not regress to any of the previously-corrected claims, `remove` must
-  actually restore, and a missing backup must abort.
-
-The test photo is deliberately built so the metric can discriminate rather than
-produce knife-edge noise: most ≥250 pixels are genuinely near-white, because
-protect=0.68 pushes inputs below ~250.6 under 250 — a fixture that spreads a linear
-ramp across the highlight range would lose ~23 % of its ≥250 share for reasons that
-have nothing to do with delivery quality.
-
-## [0.4.1] — 2026-09-19
-
-Follow-up cleanup: the 0.4.0 round fixed the scripts and `SKILL.md`, but several
-documents kept describing the old behaviour. Every item below was a direct
-contradiction with the code or with another part of the same document.
-
-- `references/calibration.md` §0 said the repo had no code to recompute the
-  image-level metrics. That stopped being true when `verify-delivery.py --images`
-  landed, so the paragraph now says both things at once: the metrics **can** be
-  recomputed from images you supply, while the six RAW files behind the historical
-  aggregate were never archived, so **that** older result still cannot be
-  reproduced — a fresh `--images` run measures your images, it does not re-check
-  the old numbers.
-- The READMEs claimed "no production command automatically creates
-  `verification.json`". Replaced with what the verifier actually does, including the
-  part that matters: without `--images` it does not compute the image-level metrics
-  at all, so an example value must never be presented as this delivery's measurement.
-- README statements that contradicted the shipped code were all corrected, not just
-  the ones reported: `--allow-unknown` was still documented as required for arbitrary
-  filenames (it is the default now), `lr-filmsim.py` was still described as
-  overwriting in place by default, `lut-to-xmp.py` as doing no XML validation,
-  generated XMP as not escaping special characters, the encoder as not enforcing
-  calibration `mode`/`protect`, and the wrapper preset group as hard-coded. The one
-  remaining limitation was reworded so it is visibly still true (numeric range
-  validation is not complete) rather than reading as a stale claim.
-- `scripts/calibrate-luts.py` and `references/pitfalls.md` quoted per-source
-  calibration figures as plain facts. They now say those came from early documents
-  that were never archived, must not be reused, and that the current input has to be
-  measured — which is what the script exists to do.
-- `references/verification-schema.md`'s example block **was** the historical number
-  set (0.977 / 247.1 / 3.31 / 5.06), which is how those values came to be quoted as
-  measurements in the first place. The example now uses neutral placeholder values,
-  with a note directly above it, so the path that caused the confusion is closed
-  rather than just annotated.
-
 ## [0.3.1]
 
 - **Windows fix.** Every Python entry point died with
@@ -321,7 +316,6 @@ contradiction with the code or with another part of the same document.
 - `LICENSE` is plain MIT text again so GitHub detects the licence (a trailing
   provenance note had made it report `NOASSERTION`); that note lives in the
   README's Licence section.
-
 ## [0.3.0] — first public release
 
 Initial open-source release of the skill. Pipeline: `LUT → calibration → target

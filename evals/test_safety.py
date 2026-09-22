@@ -324,6 +324,13 @@ def main() -> int:
         (r"are not escaped|没有转义", "说 XML 特殊字符未转义"),
         (r"No production command|没有任何生产命令", "说没有命令生成 verification.json"),
     ]
+    # CHANGELOG 的版本标题必须按版本号降序（曾经因为往前插新条目而排乱过）
+    chl = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    vers = [tuple(int(x) for x in m.groups())
+            for m in re.finditer(r'(?m)^## \[(\d+)\.(\d+)\.(\d+)\]', chl)]
+    check("CHANGELOG 版本顺序为降序", vers == sorted(vers, reverse=True),
+          f"实际 {['.'.join(map(str, v)) for v in vers]}")
+
     docs = (REPO / "README.md").read_text(encoding="utf-8") + (REPO / "README.zh.md").read_text(encoding="utf-8")
     drift = [name for pat, name in STALE if re.search(pat, docs)]
     check("README 没有回归到已知旧说法", not drift, f"回归：{drift}")
