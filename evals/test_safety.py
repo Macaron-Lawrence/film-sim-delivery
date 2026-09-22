@@ -331,6 +331,11 @@ def main() -> int:
     check("CHANGELOG 版本顺序为降序", vers == sorted(vers, reverse=True),
           f"实际 {['.'.join(map(str, v)) for v in vers]}")
 
+    # 每个版本标题前必须有空行（重排脚本曾经把 preamble 后的空行吃掉）
+    cl = chl.split("\n")
+    glued = [i + 1 for i, ln in enumerate(cl) if ln.startswith("## [") and i > 0 and cl[i - 1].strip()]
+    check("CHANGELOG 每个版本标题前有空行", not glued, f"紧贴上一行的标题在第 {glued} 行")
+
     docs = (REPO / "README.md").read_text(encoding="utf-8") + (REPO / "README.zh.md").read_text(encoding="utf-8")
     drift = [name for pat, name in STALE if re.search(pat, docs)]
     check("README 没有回归到已知旧说法", not drift, f"回归：{drift}")

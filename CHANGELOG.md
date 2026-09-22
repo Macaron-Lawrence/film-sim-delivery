@@ -1,6 +1,20 @@
 # Changelog
 
 All notable changes to `film-sim-delivery`.
+
+## [0.6.1] — 2026-09-22
+
+Fixed this file's own ordering. The 0.6.0 and 0.5.0 sections had been inserted above
+0.4.1 but *below* the 0.4.0 section that already sat at the top, so the newest entries
+were not first and the heading a reader saw first was 0.4.0.
+
+Content is unchanged — sorting the non-empty lines of both revisions and diffing them
+gives identical sets, so this is a pure move. This entry also restores the blank line
+between the preamble and the first version heading that the reorder dropped.
+
+`evals/test_safety.py` now asserts both: version headings stay in descending order, and
+every `## [` heading is preceded by a blank line.
+
 ## [0.6.0] — 2026-09-22   *feature: look strength*
 
 Asked whether LUT strength could be dialled back, and whether baking a 50 % LUT per
@@ -37,6 +51,7 @@ must equal `s·LUT + (1−s)·input` within 1 LSB, must actually differ from 100
 must keep white at 255, the multi-amount presets must share one table and one UUID,
 `--supports-amount` must flip only the preset-level flags, and the direct-path
 `--strength` must match the baked math.
+
 ## [0.5.0] — 2026-09-22   *breaking: install rollback, verdict semantics, and a `--mode` contract*
 
 Follow-up to an external review of 0.4.1. Five issues, all reproduced first.
@@ -124,6 +139,7 @@ produce knife-edge noise: most ≥250 pixels are genuinely near-white, because
 protect=0.68 pushes inputs below ~250.6 under 250 — a fixture that spreads a linear
 ramp across the highlight range would lose ~23 % of its ≥250 share for reasons that
 have nothing to do with delivery quality.
+
 ## [0.4.1] — 2026-09-19
 
 Follow-up cleanup: the 0.4.0 round fixed the scripts and `SKILL.md`, but several
@@ -158,6 +174,7 @@ contradiction with the code or with another part of the same document.
   measurements in the first place. The example now uses neutral placeholder values,
   with a note directly above it, so the path that caused the confusion is closed
   rather than just annotated.
+
 ## [0.4.0] — 2026-09-19   *breaking: CLI defaults changed*
 
 > **升级前请读**：`lr-filmsim.py` 不再默认原地覆盖，必须给 `--out` 或显式 `--in-place`；
@@ -293,6 +310,7 @@ reproduced before being fixed, and `evals/test_safety.py` now asserts it in CI.
   `pip install -r requirements.txt` → `scripts/selftest.py` passes, and
   `evals/make_fixtures.py --verify-reproducible` yields the same tree hash as CI
   (`a83a297b51f8cee3`) on Python 3.9.6 and 3.13.15 alike.
+
 ## [0.3.1]
 
 - **Windows fix.** Every Python entry point died with
@@ -316,6 +334,7 @@ reproduced before being fixed, and `evals/test_safety.py` now asserts it in CI.
 - `LICENSE` is plain MIT text again so GitHub detects the licence (a trailing
   provenance note had made it report `NOASSERTION`); that note lives in the
   README's Licence section.
+
 ## [0.3.0] — first public release
 
 Initial open-source release of the skill. Pipeline: `LUT → calibration → target
