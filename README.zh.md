@@ -169,6 +169,35 @@ bash scripts/apply-look.sh look \
   photos/
 ```
 
+### 控制外观强度（Amount）
+
+交付不一定要「全开」。有三条路，成本差别很大：
+
+| 做法 | 命令 | 成本 | 代价 |
+|---|---|---|---|
+| **烘进表里** | `--bake-strength 0.5` | 每个强度一份完整配置文件 | 这份配置**本身就是** 50%；事后不可调，但算法在我们手里、可复核（`out = 0.5·LUT + 0.5·输入`） |
+| **多强度预设** | `--amounts 1,0.75,0.5,0.25` | 每个预设约 1.7 KB，**不复制表** | 在「预设」面板里可切换 100/75/50/25%；这正是 Adobe 与 Fujifilm 官方预设的结构（`crs:Look` 里的 `crs:Amount`） |
+| **让宿主给滑块** | `--supports-amount` | 免费 | 在预设上把 `SupportsAmount`/`SupportsAmount2` 写成 `True`。**未在真实 Lightroom 中验证**（Adobe 自家的 Fujifilm 预设写的是 `False`），所以默认关闭 |
+| 直接套图 | `lr-filmsim.py --strength 0.5` | 免费 | 混合语义相同（`0.5·LUT + 0.5·输入`），不经过宿主 |
+
+混合永远是跟**输入**线性混合、在外观自己的空间里做的，所以 `--bake-strength 0.5` 与
+`lr-filmsim.py --strength 0.5` 结果一致——`evals/test_strength.py` 在 CI 里断言了这个等式，
+以及「多强度预设共用同一张内嵌表」。
+
+```bash
+# 100% 配置文件 + 100/75/50/25% 四个预设，共用一张表
+python3 scripts/lut-to-ccprofile.py --dir "$FILMSIM_ROOT/luts" \
+  --calibration "$FILMSIM_ROOT/luts/_calibration.json" --mode brightness \
+  --out "$FILMSIM_ROOT/lr-ccprofiles" --space display --protect 0.68 \
+  --amounts 1,0.75,0.5,0.25
+
+# 或者单独要一份 50% 的配置文件
+python3 scripts/lut-to-ccprofile.py --dir "$FILMSIM_ROOT/luts" \
+  --calibration "$FILMSIM_ROOT/luts/_calibration.json" --mode brightness \
+  --out "$FILMSIM_ROOT/lr-ccprofiles-50" --space display --protect 0.68 \
+  --bake-strength 0.5 --label "50%"
+```
+
 ### 生成 HaldCLUT
 
 ```bash
@@ -258,7 +287,7 @@ python3 scripts/install_ccprofiles.py remove \
 
 | 入口 | 输入与输出 | 主要选项 | 副作用与校验 |
 |---|---|---|---|
-| `scripts/lut-to-ccprofile.py` | 顶层 `.cube` / `.png` / `.tif` LUT → 配置文件 XMP + 包装 XMP | `--dir`, `--out`, `--only`, `--only-known`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--mode`, `--group`, `--protect` | 默认处理任意文件名。创建输出目录，覆盖同名 XMP。解码每张编码后的表（误差 < 1 个 16 位 LSB），并用 XML 解析器复读每个写出的文件，失败即删除。标定口径（`mode`/`protect`）与本次不一致时拒绝运行。**零产物返回非零退出码。不测 Adobe 宿主。** |
+| `scripts/lut-to-ccprofile.py` | 顶层 `.cube` / `.png` / `.tif` LUT → 配置文件 XMP + 包装 XMP | `--dir`, `--out`, `--only`, `--only-known`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--mode`, `--group`, `--protect`, `--bake-strength`, `--amounts`, `--supports-amount` | 默认处理任意文件名。创建输出目录，覆盖同名 XMP。解码每张编码后的表（误差 < 1 个 16 位 LSB），并用 XML 解析器复读每个写出的文件，失败即删除。标定口径（`mode`/`protect`）与本次不一致时拒绝运行。**零产物返回非零退出码。不测 Adobe 宿主。** |
 | `scripts/calibrate-luts.py` | 顶层 LUT 文件 → JSON | `--mode`, `--protect`, `--merge`, `--out` | 写 JSON。二分法**假定**得分在增益 0.10–4.0 区间单调，且不检查是否成功夹住区间。`--merge` 会保留已有的无关记录。 |
 | `scripts/lr-filmsim.py` | `.cube` 或 HaldCLUT + 图片 → 处理后的图片 | `--out`, `--in-place`, `--overwrite`, `--calibration`, `--protect`, `--suffix`, `--strength`, `--linear-pipeline`, `--pre-gain`, `--info` | **必须显式选择落盘位置**；原地写入一定先备份（`.filmsim-backups/`）；输出重名默认拒绝。使用原子临时文件替换。 |
 | `scripts/cube-to-hald.py` | 顶层 `.cube` → HaldCLUT PNG | `--level`, `--pre-gain`, `--only`, `--out` | 创建输出目录，覆盖同名 PNG。**不做往返比对。** |
@@ -275,6 +304,7 @@ python3 scripts/install_ccprofiles.py remove \
 | `scripts/selftest.py` | 生成的合成 LUT → 临时标定与 XMP 产物 | `--work` | 不给 `--work` 时，成功后删除其临时目录。检查表格 MD5 约定、编解码误差、中点与被保护的白点。 |
 | `evals/test_safety.py` | 临时工作区 → 通过/失败报告 | — | 断言：不给 `--in-place` 不会原地写；不会静默覆盖；零产物退出非零；任意文件名与 XML 特殊字符可用；安装冲突会中止；回滚按清单精确执行；标定口径不一致会被拒；文档不引用不存在的脚本。 |
 | `evals/test_grader.py` | 造一个已知正确的候选并打分 | — | 断言评分器给它满分、删掉产物后不再满分、且真的复算了 `decode_error_lsb`。 |
+| `evals/test_strength.py` | 临时生成若干档强度 | — | 断言烘焙强度严格等于 `s·LUT + (1−s)·输入`（1 LSB 内）、`--amounts` 产出的多个预设共用同一张内嵌表、`--supports-amount` 只改预设层声明、`lr-filmsim.py --strength` 与烘焙口径一致。 |
 | `scripts/selftest.sh` | `scripts/selftest.py` 的 POSIX 包装 | 参数透传 | 校验内容与 Python 自检相同。 |
 | `evals/make_fixtures.py` | 合成生成器 → 提交风格的样本树 | `--out`, `--verify-reproducible` | 写入或覆盖样本。检查缺陷签名；可复现模式会比对两棵生成的树。 |
 | `evals/grade.py` | 一次外部评测运行目录 → 控制台或 JSON 评分 | `--eval`, `--fixtures`, `--no-fixtures`, `--json` | 除非给 `--json`，否则只读。解码候选配置文件并检查声明的评测产物；**它不是通用的交付验证器**。 |

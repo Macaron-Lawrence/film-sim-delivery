@@ -138,6 +138,43 @@ reproduced before being fixed, and `evals/test_safety.py` now asserts it in CI.
   `evals/make_fixtures.py --verify-reproducible` yields the same tree hash as CI
   (`a83a297b51f8cee3`) on Python 3.9.6 and 3.13.15 alike.
 
+## [0.6.0] — 2026-09-22   *feature: look strength*
+
+Asked whether LUT strength could be dialled back, and whether baking a 50 % LUT per
+strength into separate preset folders was the right way to do it. It works, but it is
+the expensive option, and the cheap one was already half-present in the output.
+
+What the audit found: our wrapper presets are structurally identical to Adobe's and
+Fujifilm's shipped ones — including `crs:Amount="1"`, the field that carries how
+strongly a Look is applied. The strength mechanism was already in our files, pinned
+at 100 %, and the preset-level `SupportsAmount2` was set to `False` exactly as the
+official profiles set it.
+
+Three ways to control strength, all now implemented and tested:
+
+- `--bake-strength s` bakes the intensity into the table:
+  `out = s·LUT + (1−s)·input`, in the look's own space. Verifiable, frozen after the
+  fact, one full table per strength.
+- `--amounts 1,0.75,0.5,0.25` emits extra wrapper presets that share the **same**
+  embedded table and the same Look UUID, differing only in `crs:Amount`. This is the
+  "50 % preset folder" idea at ~1.7 KB per preset instead of a duplicated 76 KB table
+  per strength, and it is the structure Adobe/Fujifilm already use.
+- `--supports-amount` sets `SupportsAmount`/`SupportsAmount2` to `True` on the preset,
+  which is the documented way to make a host offer a strength slider (they are the
+  flags for Lightroom's Amount control; `SupportsAmount` was superseded by
+  `SupportsAmount2` from Camera Raw 1.4). Adobe's own profiles ship `False`, and no
+  host was available to confirm the slider appears, so this is opt-in and labelled as
+  unverified rather than presented as working.
+
+`lr-filmsim.py --strength` already existed for the direct path and uses the same
+blend, so `--bake-strength 0.5` and `--strength 0.5` agree.
+
+New `evals/test_strength.py` (13 assertions, in CI) locks this down: baked strength
+must equal `s·LUT + (1−s)·input` within 1 LSB, must actually differ from 100 %,
+must keep white at 255, the multi-amount presets must share one table and one UUID,
+`--supports-amount` must flip only the preset-level flags, and the direct-path
+`--strength` must match the baked math.
+
 ## [0.5.0] — 2026-09-22   *breaking: install rollback, verdict semantics, and a `--mode` contract*
 
 Follow-up to an external review of 0.4.1. Five issues, all reproduced first.

@@ -173,6 +173,37 @@ bash scripts/apply-look.sh look \
   photos/
 ```
 
+### Control the strength of a look
+
+A delivered look does not have to be all-or-nothing. There are three ways, and they
+are not equally cheap:
+
+| Approach | Command | Cost | Trade-off |
+|---|---|---|---|
+| **Bake it into the table** | `--bake-strength 0.5` | one more profile per strength (a full table each) | the profile *is* 50 %; nothing to adjust afterwards, but the math is ours and verifiable — `out = 0.5·LUT + 0.5·input` |
+| **Extra presets at other amounts** | `--amounts 1,0.75,0.5,0.25` | ~1.7 KB per preset, **no table duplication** | several switchable strengths in the Presets panel; this is the same structure Adobe and Fujifilm ship (`crs:Amount` inside `crs:Look`) |
+| **Ask the host for a slider** | `--supports-amount` | free | sets `SupportsAmount`/`SupportsAmount2` to `True` on the preset. **Not verified against a real Lightroom** — Adobe's own Fujifilm profiles ship `False` — so it is opt-in |
+| Direct image processing | `lr-filmsim.py --strength 0.5` | free | same blend semantics (`0.5·LUT + 0.5·input`), no host involved |
+
+The blend is always linear against the *input*, in the look's own space, so
+`--bake-strength 0.5` and `lr-filmsim.py --strength 0.5` agree. `evals/test_strength.py`
+asserts exactly that equality in CI, together with the fact that the multi-amount
+presets share a single embedded table.
+
+```bash
+# 100 % profile + presets at 100/75/50/25 % sharing one table
+python3 scripts/lut-to-ccprofile.py --dir "$FILMSIM_ROOT/luts" \
+  --calibration "$FILMSIM_ROOT/luts/_calibration.json" --mode brightness \
+  --out "$FILMSIM_ROOT/lr-ccprofiles" --space display --protect 0.68 \
+  --amounts 1,0.75,0.5,0.25
+
+# or a standalone 50 % profile
+python3 scripts/lut-to-ccprofile.py --dir "$FILMSIM_ROOT/luts" \
+  --calibration "$FILMSIM_ROOT/luts/_calibration.json" --mode brightness \
+  --out "$FILMSIM_ROOT/lr-ccprofiles-50" --space display --protect 0.68 \
+  --bake-strength 0.5 --label "50%"
+```
+
 ### Build a HaldCLUT
 
 ```bash
@@ -262,7 +293,7 @@ If the source XMP files are no longer present, the installer has no record of wh
 
 | Entry point | Input and output | Key options | Side effects and validation |
 |---|---|---|---|
-| `scripts/lut-to-ccprofile.py` | Top-level `.cube`, `.png`, or `.tif` LUTs to profile XMP plus wrapper XMP | `--dir`, `--out`, `--only`, `--only-known`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--mode`, `--group`, `--protect` | Processes any filename by default. Creates the output directory and overwrites same-named XMP files. Decodes each encoded table (less than one 16-bit LSB error) and re-parses every XMP it writes, deleting files that fail. Refuses to run when the calibration's `mode`/`protect` disagree with the invocation, and **exits non-zero on zero output**. Does not test an Adobe host. |
+| `scripts/lut-to-ccprofile.py` | Top-level `.cube`, `.png`, or `.tif` LUTs to profile XMP plus wrapper XMP | `--dir`, `--out`, `--only`, `--only-known`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--mode`, `--group`, `--protect`, `--bake-strength`, `--amounts`, `--supports-amount` | Processes any filename by default. Creates the output directory and overwrites same-named XMP files. Decodes each encoded table (less than one 16-bit LSB error) and re-parses every XMP it writes, deleting files that fail. Refuses to run when the calibration's `mode`/`protect` disagree with the invocation, and **exits non-zero on zero output**. Does not test an Adobe host. |
 | `scripts/calibrate-luts.py` | Top-level LUT files to JSON | `--mode`, `--protect`, `--merge`, `--out` | Writes JSON. Bisection assumes score is monotonic over gain 0.10 to 4.0 and does not check bracketing. `--merge` preserves unrelated existing records. |
 | `scripts/lr-filmsim.py` | `.cube` or HaldCLUT plus images to processed images | `--out`, `--in-place`, `--no-backup`, `--overwrite`, `--calibration`, `--protect`, `--suffix`, `--strength`, `--linear-pipeline`, `--pre-gain`, `--info` | Refuses to run without `--out` or an explicit `--in-place`; in-place writes are backed up under `.filmsim-backups/`; an existing output needs `--overwrite`. `--calibration` reuses the per-LUT gain and `--protect` mirrors the profile path. Uses an atomic temporary-file replace. Argument ranges are not enforced. |
 | `scripts/cube-to-hald.py` | Top-level `.cube` files to HaldCLUT PNG | `--level`, `--pre-gain`, `--only`, `--out` | Creates output directory and overwrites same-named PNGs. No round-trip comparison is performed. |
@@ -279,6 +310,7 @@ If the source XMP files are no longer present, the installer has no record of wh
 | `scripts/selftest.py` | Generated synthetic LUT to temporary calibration and XMP artifacts | `--work` | Without `--work`, removes its temporary directory after success. Checks table MD5 convention, encode/decode error, midpoint, and protected white. |
 | `evals/test_safety.py` | Temporary workspaces to a pass/fail report | — | Asserts: no in-place write without `--in-place`, no silent overwrite, zero output exits non-zero, arbitrary filenames and XML-special characters work, install conflicts abort, rollback is manifest-exact, calibration mismatches are refused, and no document references a script that does not exist. |
 | `evals/test_grader.py` | Builds a synthetic known-good candidate and grades it | — | Asserts the grader gives it full marks, still fails once artifacts are removed, and genuinely recomputes `decode_error_lsb`. |
+| `evals/test_strength.py` | Temporary generation runs | — | Asserts baked strength equals `s·LUT + (1−s)·input` within 1 LSB, that `--amounts` emits several presets sharing one embedded table, that `--supports-amount` flips only the preset-level flags, and that `lr-filmsim.py --strength` agrees with the baked math. |
 | `scripts/selftest.sh` | POSIX wrapper for `scripts/selftest.py` | Arguments pass through | Same validation as the Python self-test. |
 | `evals/make_fixtures.py` | Synthetic generator to committed-style fixture tree | `--out`, `--verify-reproducible` | Writes or overwrites fixtures. Checks defect signatures; reproducibility mode compares two generated trees. |
 | `evals/grade.py` | An external evaluation run directory to console or JSON grading | `--eval`, `--fixtures`, `--no-fixtures`, `--json` | Read-only unless `--json` is given. Decodes candidate profiles and checks declared evaluation artifacts; it is not a general delivery verifier. |

@@ -256,7 +256,7 @@ def decode_table(text: str) -> tuple[np.ndarray, int]:
 # ---------------------------------------------------------------- 采样 LUT
 
 def build_table(cube: Path, div: int, space: str, pre_gain: float,
-                protect: float = 0.0) -> np.ndarray:
+                protect: float = 0.0, strength: float = 1.0) -> np.ndarray:
     lut, _ = core.load_lut(str(cube))
     axis = np.linspace(0, 1, div, dtype=np.float32)
     ri, gi, bi = np.meshgrid(axis, axis, axis, indexing="ij")
@@ -284,6 +284,13 @@ def build_table(cube: Path, div: int, space: str, pre_gain: float,
         t = np.clip((lum - protect) / max(1e-6, 1.0 - protect), 0.0, 1.0)
         w = 1.0 - (t * t * (3.0 - 2.0 * t))
         out = out * w[..., None] + base * (1.0 - w[..., None])
+
+    if strength < 1.0:
+        # 强度烘焙：out_s = s·out + (1-s)·输入恒等
+        # 与 lr-filmsim.py --strength 同一套语义（都是跟**输入**线性混合），
+        # 区别只是这里把结果固定进表里。s=1 时完全不变（默认）。
+        base_all = pts.reshape(div, div, div, 3)
+        out = out * float(strength) + base_all * (1.0 - float(strength))
     return out.astype(np.float32)
 
 
@@ -376,7 +383,14 @@ def look_xmp(name: str, table_id: str, payload: str, base_profile: str, digest: 
 """
 
 
-def wrapper_xmp(name: str, look_uuid: str, group: str) -> str:
+def wrapper_xmp(name: str, look_uuid: str, group: str, amount: float = 1.0,
+                supports_amount: bool = False) -> str:
+    # Amount 是这个 Look 被施加时的强度（0–1），Adobe/Fujifilm 官方预设就是用它。
+    # SupportsAmount/SupportsAmount2 决定 Lightroom 是否给出可拖的"Amount"滑块：
+    #   · 官方（Fujifilm 整套）写的是 False —— 强度被固定成预设里的 Amount；
+    #   · 写 True 是否真能让滑块出现，需要在真实 Lightroom 里验证，CI 测不到，
+    #     所以默认保持 False（与官方一致），要试就加 --supports-amount。
+    AMT_TRUE, AMT_FALSE = "True", "False"
     wuid = uuid.uuid4().hex.upper()
     return f"""<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00        ">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -385,8 +399,8 @@ def wrapper_xmp(name: str, look_uuid: str, group: str) -> str:
    crs:PresetType="Normal"
    crs:Cluster=""
    crs:UUID="{xattr(wuid)}"
-   crs:SupportsAmount2="False"
-   crs:SupportsAmount="False"
+   crs:SupportsAmount2="{AMT_TRUE if supports_amount else AMT_FALSE}"
+   crs:SupportsAmount="{AMT_TRUE if supports_amount else AMT_FALSE}"
    crs:SupportsColor="True"
    crs:SupportsMonochrome="True"
    crs:SupportsHighDynamicRange="True"
@@ -429,7 +443,7 @@ def wrapper_xmp(name: str, look_uuid: str, group: str) -> str:
    </crs:Description>
    <crs:Look
     crs:Name="{xattr(name)}"
-    crs:Amount="1"
+    crs:Amount="{amount:g}"
     crs:UUID="{xattr(look_uuid)}"
     crs:SupportsAmount="false"
     crs:SupportsMonochrome="false"
@@ -469,6 +483,17 @@ def main() -> int:
     ap.add_argument("--protect", type=float, default=0.0,
                     help="护高光阈值 0~1（如 0.62=亮度超过 158/255 的部分平滑混回原样，"
                          "L=1.0 时输出=输入，纯白保持 255，不再受胶片肩部压制）")
+    ap.add_argument("--bake-strength", type=float, default=1.0,
+                    help="把强度**烘焙进表里**：out = s·LUT + (1-s)·输入（默认 1=不降级）。"
+                         "产出的配置文件本身就是'50%% 强度'，不依赖宿主的 Amount 滑块")
+    ap.add_argument("--amounts", default="",
+                    help="额外生成几个不同强度的 wrapper 预设（逗号分隔，如 1,0.75,0.5,0.25）。"
+                         "它们共用同一张表、同一个 Look UUID，只是 crs:Amount 不同——"
+                         "文件只有 1KB 级，不重复表数据")
+    ap.add_argument("--supports-amount", action="store_true",
+                    help="在预设上声明 SupportsAmount2/SupportsAmount=True，"
+                         "尝试让 Lightroom 给出可拖的强度滑块。**该行为未在真实 LR 中验证**，"
+                         "默认关闭（与 Adobe/Fujifilm 官方预设一致，官方写的是 False）")
     args = ap.parse_args()
 
     # 参数范围校验：宁可在这里拒绝，也不要产出一个看着正常、其实参数已经越界的交付
@@ -477,6 +502,8 @@ def main() -> int:
         bad.append(f"--divisions {args.divisions}（要求 1–64）")
     if not (0.0 <= args.protect < 1.0):
         bad.append(f"--protect {args.protect}（要求 0 ≤ protect < 1）")
+    if not (0.0 < args.bake_strength <= 1.0):
+        bad.append(f"--bake-strength {args.bake_strength}（要求 0 < s ≤ 1；0 等于不用这张 LUT）")
     if not (0.01 <= args.pre_gain <= 8.0):
         bad.append(f"--pre-gain {args.pre_gain}（要求 0.01–8.0）")
     if args.space not in ("display", "linear", "both"):
@@ -542,6 +569,17 @@ def main() -> int:
         if modes:
             print(f"  标定口径核对通过：mode={sorted(modes)[0]}，protect={args.protect}")
 
+    try:
+        amounts = [float(x) for x in args.amounts.split(",") if x.strip()] or [1.0]
+    except ValueError:
+        print(f"✗ --amounts 解析失败：{args.amounts!r}（应形如 1,0.75,0.5）", file=sys.stderr)
+        return 2
+    for a in amounts:
+        if not (0.0 < a <= 1.0):
+            print(f"✗ --amounts 里有越界值 {a}（要求 0 < a ≤ 1）", file=sys.stderr)
+            return 2
+    amounts = sorted(set(amounts), reverse=True)
+
     spaces = ["linear", "display"] if args.space == "both" else [args.space]
     made, skipped_known, failed = [], [], []
     for c in cubes:
@@ -552,7 +590,8 @@ def main() -> int:
         for sp in spaces:
           try:
             gain = float(calib.get(stem, {}).get("pre_gain", args.pre_gain))
-            colors = build_table(Path(c), args.divisions, sp, gain, args.protect)
+            colors = build_table(Path(c), args.divisions, sp, gain, args.protect,
+                                 args.bake_strength)
             blob = encode_table(colors, args.divisions, META[sp])
             # 自检：解回来必须与写入一致
             back, div2 = decode_table(b85_encode(blob))
@@ -571,16 +610,25 @@ def main() -> int:
             base = args.base_profile if args.base_profile else BASE[sp]
             digest = args.base_digest if args.base_profile else (BASE_DIGEST if sp == "linear" else "")
             prof_path = out_dir / f"{name}.xmp"
-            wrap_path = out_dir / f"{name} wrapper.xmp"
             prof_path.write_text(look_xmp(name, tid, payload, base, digest, look_uuid,
                                           desc, args.group), encoding="utf-8")
-            wrap_path.write_text(wrapper_xmp(name, look_uuid, args.group),
-                                 encoding="utf-8")
-            # 生成即验证：两个文件都必须能被标准 XML 解析器读回
+            # 生成即验证：写出的文件必须能被标准 XML 解析器读回
             assert_parsable(prof_path, "创意配置文件")
-            assert_parsable(wrap_path, "wrapper 预设")
+
+            # wrapper 预设：--amounts 会生成多个强度，共用同一个 Look UUID 与同一张表，
+            # 只是 crs:Amount 不同（Adobe/Fujifilm 官方就是这个结构）
+            for amt in amounts:
+                suffix = "" if amt >= 1.0 else f"（{amt * 100:g}%）"
+                wrap_path = out_dir / f"{name}{suffix} wrapper.xmp"
+                wrap_path.write_text(
+                    wrapper_xmp(name + suffix, look_uuid, args.group, amt,
+                                args.supports_amount), encoding="utf-8")
+                assert_parsable(wrap_path, "wrapper 预设")
             made.append((name, len(payload), err))
-            print(f"✓ {name:30s} pre-gain={gain:.3f}  {len(payload)/1024:5.0f}KB  基底={base}"[:112])
+            extra = "" if amounts == [1.0] else f"  预设强度={'/'.join(f'{a*100:g}%' for a in amounts)}"
+            baked = "" if args.bake_strength >= 1.0 else f"  [烘焙强度 {args.bake_strength*100:g}%]"
+            print(f"✓ {name[:26]:26s} pre-gain={gain:.3f}  {len(payload)/1024:5.0f}KB  基底={base}"
+                  f"{extra}{baked}"[:118])
           except Exception as exc:  # noqa: BLE001
             failed.append((stem, f"{type(exc).__name__}: {exc}"))
             print(f"✗ {stem}: {exc}", file=sys.stderr)

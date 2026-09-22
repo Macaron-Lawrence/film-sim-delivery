@@ -103,6 +103,11 @@ PY="$SKILL_ROOT/.venv/bin/python"                # 之后一律用绝对路径�
       --out "$FILMSIM_ROOT/lr-ccprofiles/verification.json"
 ```
 
+**强度（Amount）**：`--bake-strength 0.5` 把强度烘进表里（产出的配置本身就是 50% 强度）；
+`--amounts 1,0.75,0.5,0.25` 会额外生成几个 1KB 级的 wrapper 预设，它们**共用同一张表**、
+只是 `crs:Amount` 不同——这是 Adobe/Fujifilm 官方预设的同款结构，比按强度烘 N 张表省得多。
+直接套图路径用 `--strength 0.5`，语义一致（都是与输入线性混合）。
+
 **`--space` 必须与基底配置文件配对**：`display` → 基底 `Adobe Standard` + 元数据 `(1,3,0,0.0,1.0)`；
 `linear` → 基底 `Adobe Standard Linear` + 元数据 `(3,1,0,1.0,1.0)`。配错的典型症状是"整张发灰"，
 细节见 `references/rgb-table-format.md` §3。

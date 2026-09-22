@@ -43,3 +43,5 @@ jobs:
         run: python evals/test_safety.py
       - name: Grader self-check on a synthetic candidate run
         run: python evals/test_grader.py
+      - name: Strength / amount regression
+        run: python evals/test_strength.py
