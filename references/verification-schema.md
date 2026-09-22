@@ -51,6 +51,17 @@
 }
 ```
 
+`verdict` 是三态，**`partial` 不等于通过**：
+
+| verdict | 含义 | 退出码 |
+|---|---|---|
+| `pass` | 必需项全部由脚本复算并通过 | 0 |
+| `partial` | 算出来的都过了，但有指标缺输入没算（见 `unrecomputed`） | 3（加 `--allow-partial` 才 0） |
+| `fail` | 有指标不达标，或声明了 `--require-images` 却没给图片 | 1 |
+
+生成方式是 `scripts/verify-delivery.py`。**不要手写这个文件**——手写的数字无法独立复算，
+凭证就退化成了自述。
+
 ## 硬性要求
 
 | 字段 | 判据 |
@@ -60,9 +71,12 @@
 | `checks.mid_gray_out` | 118–145（取决于标定模式：midgray≈128 / brightness≈138） |
 | `checks.white_out` | ≥ 250（护高光生效） |
 | `checks.brightness_ratio` | 0.95–1.05 |
-| `checks.top5pct_median` | ≥ 240（原图亮度前 5% 像素的输出亮度**中位数**；字段名即定义，早期行文误写作"均值"） |
-| `checks.pct_ge_250` | ≥ 2.5 |
-| `checks.highlight_detail_std` | ≥ 3.5 |
+| `checks.top5pct_median` | ≥ 240（原图亮度前 5% 像素的输出亮度**中位数**；字段名即定义）。**两段式**：原图达到 240 就按 240 判，否则按原图的 95% |
+| `checks.pct_ge_250` | ≥ 2.5。两段式：原图达到 2.5 就按 2.5 判，否则按原图的 80% |
+| `checks.highlight_detail_std` | ≥ 3.5。两段式：原图达到 3.5 就按 3.5 判，否则按原图的 50% |
+
+后三行的绝对目标来自早期文档那组未归档数字（见 `calibration.md` §0），在浅高光的照片上本来就
+达不到，所以要退到"不许比原图差"的保留率下限。实际用了哪条写在 `thresholds_used.basis`。
 | `outputs.table_id` | = 交付表内容的 MD5（大写十六进制） |
 
 ## 复核方式（评分器怎么用它）

@@ -78,7 +78,7 @@ def main() -> int:
     # ③ 生成创意配置文件
     out = work / "lr-ccprofiles"
     subprocess.run([py, str(HERE / "lut-to-ccprofile.py"), "--dir", str(luts),
-                    "--calibration", str(cal), "--out", str(out),
+                    "--calibration", str(cal), "--out", str(out), "--mode", "brightness",
                     "--space", "display", "--protect", "0.68",
                     "--allow-unknown", "--label", "自检"],
                    check=True, stdout=subprocess.DEVNULL)

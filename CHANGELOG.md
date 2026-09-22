@@ -138,6 +138,94 @@ reproduced before being fixed, and `evals/test_safety.py` now asserts it in CI.
   `evals/make_fixtures.py --verify-reproducible` yields the same tree hash as CI
   (`a83a297b51f8cee3`) on Python 3.9.6 and 3.13.15 alike.
 
+## [0.5.0] — 2026-09-22   *breaking: install rollback, verdict semantics, and a `--mode` contract*
+
+Follow-up to an external review of 0.4.1. Five issues, all reproduced first.
+
+### Install / rollback (P0)
+
+`remove` only deleted the files it had installed; it never put back the file it had
+overwritten. So "rollback" meant "undo the install", not "restore the previous
+state" — anyone reading "manifest-exact rollback" would reasonably expect their own
+profile to come back.
+
+`remove` now rolls back to the pre-install state: files that were overwritten are
+**restored from their backup** after checking the recorded hash, files that were
+newly added are deleted, and if any recorded file was modified after installing (or
+its backup is missing) the whole removal aborts rather than leaving a half-finished
+state. `--dry-run` prints which files will be restored and which will be deleted.
+
+### Verification verdict (P0)
+
+`verify-delivery.py` could print `verdict: pass` while image-level metrics were never
+computed — exactly the "not recomputed is not a pass" rule it was built to enforce.
+
+The verdict is now three-valued and the exit code follows it:
+
+| verdict | meaning | exit |
+|---|---|---|
+| `pass` | everything required was recomputed and passed | 0 |
+| `partial` | computed checks passed, some metrics lacked input (**not a pass**) | 3 |
+| `fail` | a check failed, or the run required images (`--require-images`) and got none | 1 |
+
+`--allow-partial` is the only way to make `partial` exit zero.
+
+### Grade thresholds (P1, and a documentation contradiction)
+
+The docs said the source-image baseline was "never more lenient" than the absolute
+target; the code used `min(absolute, fraction × source)`, which *is* more lenient
+whenever the source meets the absolute target. The intent is now decided and both
+sides say the same thing: **two-stage** — if the supplied images meet the absolute
+target, the absolute target applies (stricter); only when they do not does the
+retention floor apply. Either way the output may not be worse than the input, and
+which branch was used is recorded in `thresholds_used.basis`.
+
+### Calibration `mode` contract (P1)
+
+0.4.0 enforced `protect` but not `mode`: generation never had to declare which mode
+its calibration was produced with, so half the contract was unenforceable. Using
+`--calibration` now requires an explicit `--mode`, which must match the recorded
+mode; a mismatch aborts. This immediately broke three of our own call sites
+(`selftest.py`, `test_safety.py`, `test_grader.py`) — which is what a contract
+actually taking effect looks like.
+
+### Range validation (P1)
+
+`--divisions` (1–64), `--protect` (0 ≤ p < 1), `--pre-gain` (0.01–8.0) and
+`--strength` (0–1) are now rejected at the entry point instead of producing invalid
+or extreme output. Size values in the preview helpers and `cube-to-hald.py --level`
+remain unchecked.
+
+### Glob injection in failure cleanup (found while auditing)
+
+The generator's cleanup after a failed encode used `glob("*{stem}*.xmp")`, so a stem
+containing `*`, `?` or `[ ]` widened the pattern: with `stem="*"` it matched and
+deleted *other* deliveries in the output directory (reproduced). Cleanup now unlinks
+only the two exact paths it just wrote.
+
+### Evals now test behaviour, not just artifacts
+
+- `eval 0`/`eval 2` asked for image-level metrics while shipping no image, which left
+  a candidate three bad options: invent numbers, copy the example, or fail. The
+  fixtures now include a deterministic test photo, and **the grader recomputes the
+  four image-level metrics itself** from that photo; declared values are only
+  cross-checked. A declared value that disagrees with the recomputation fails.
+- Two new safety-behaviour tasks: `eval 3` (a user demanding in-place replacement
+  with no backup) and `eval 4` (a user demanding an unconfirmed overwrite of their
+  own profile). Both are graded from filesystem consequences — original hashes,
+  backups, manifest — not from what the agent says it did. Verified to discriminate:
+  the unsafe behaviours score 2/4 and 0/4, the safe ones 4/4.
+- `test_safety.py` grew from 22 to 34 assertions: SKILL.md must still contain every
+  execution gate, no SKILL.md command may rely on the current working directory, the
+  README may not regress to any of the previously-corrected claims, `remove` must
+  actually restore, and a missing backup must abort.
+
+The test photo is deliberately built so the metric can discriminate rather than
+produce knife-edge noise: most ≥250 pixels are genuinely near-white, because
+protect=0.68 pushes inputs below ~250.6 under 250 — a fixture that spreads a linear
+ramp across the highlight range would lose ~23 % of its ≥250 share for reasons that
+have nothing to do with delivery quality.
+
 ## [0.4.1] — 2026-09-19
 
 Follow-up cleanup: the 0.4.0 round fixed the scripts and `SKILL.md`, but several

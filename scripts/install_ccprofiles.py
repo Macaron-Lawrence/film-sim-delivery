@@ -185,14 +185,17 @@ def main() -> int:
             print("\n（--dry-run：未写入任何文件）")
             return 0
 
-        backups = {}
+        backups, backup_hashes = {}, {}
         if pl["conflict"] and not args.no_backup:
             bdir = dest / BACKUP_DIR_NAME / time.strftime("%Y%m%d-%H%M%S")
             bdir.mkdir(parents=True, exist_ok=True)
             for f, t, _ in pl["conflict"]:
                 shutil.copy2(t, bdir / t.name)
                 backups[f.name] = str(bdir / t.name)
+                backup_hashes[f.name] = sha256_of(t)   # 记录安装**前**的指纹，恢复时核对
             print(f"\n已备份 {len(backups)} 个被覆盖的文件 → {bdir}")
+        elif pl["conflict"]:
+            print("\n注意：--no-backup 下被覆盖的旧文件没有备份，remove 无法恢复它们。", file=sys.stderr)
 
         dest.mkdir(parents=True, exist_ok=True)
         entries = {e["name"]: e for e in manifest["entries"] if e.get("name")}
@@ -206,6 +209,10 @@ def main() -> int:
                 "source": str(f),
                 "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "backup": backups.get(f.name),
+                # 安装前该文件是否存在、指纹是什么 —— remove 靠这个决定"删除"还是"恢复"
+                "backup_sha256": backup_hashes.get(f.name),
+                "replaced_existing": f.name in backup_hashes or (
+                    f.name not in pl["add"] and f.name in backups),
             }
         manifest["entries"] = sorted(entries.values(), key=lambda e: e["name"])
         mpath = save_manifest(dest, manifest)
@@ -234,7 +241,7 @@ def main() -> int:
     else:
         targets = [(n, e) for n, e in sorted(entries.items())]
 
-    print(f"\n计划：从清单回滚 {len(targets)} 个文件")
+    print(f"\n计划：从清单回滚 {len(targets)} 个文件（有备份的**恢复原文件**，没备份的删除）")
     to_delete, skipped = [], []
     for name, e in targets:
         t = dest / name
@@ -249,8 +256,16 @@ def main() -> int:
         else:
             skipped.append((name, f"已被改动（清单 {str(e.get('sha256'))[:12]}… / 现在 {cur[:12]}…）"))
 
+    def action_of(e) -> str:
+        if e is None:
+            return "删除"
+        if e.get("backup") or e.get("replaced_existing"):
+            return "恢复备份"
+        return "删除"
+
     for name, e, cur in to_delete:
-        print(f"  - {name}")
+        print(f"  - {action_of(e)}：{name}"
+              + (f"  ← {Path(e['backup']).name}" if (e and e.get("backup")) else ""))
     for name, why in skipped:
         print(f"  ~ 跳过 {name}：{why}")
 
@@ -270,14 +285,48 @@ def main() -> int:
         print("\n（--dry-run：未删除任何文件）")
         return 0
 
-    removed = 0
+    restored, deleted, restore_failed = 0, 0, []
     for name, e, cur in to_delete:
-        (dest / name).unlink()
+        target = dest / name
+        bak = None
+        if e and (e.get("backup") or e.get("replaced_existing")):
+            bak = Path(e["backup"]) if e.get("backup") else None
+            if bak is None or not bak.is_file():
+                # 清单说安装时覆盖过旧文件，但备份找不到了 —— 不能假装恢复成功
+                restore_failed.append((name, "清单记录了备份，但备份文件不存在"))
+                continue
+            want = e.get("backup_sha256")
+            if want and sha256_of(bak) != want:
+                restore_failed.append(
+                    (name, f"备份指纹与安装时记录不符（记录 {str(want)[:12]}… / 备份 {sha256_of(bak)[:12]}…）"))
+                continue
+            if not want:
+                print(f"  ! {name}：这份清单没有记录备份指纹（旧版安装），直接按备份恢复", file=sys.stderr)
+            shutil.copy2(bak, target)
+            restored += 1
+        else:
+            target.unlink()
+            deleted += 1
         entries.pop(name, None)
-        removed += 1
+
+    if restore_failed and not args.force:
+        print(f"\n✗ 有 {len(restore_failed)} 个文件无法恢复（这会留下半完成状态），已中止，未删除任何文件：",
+              file=sys.stderr)
+        for nm, why in restore_failed:
+            print(f"    {nm}: {why}", file=sys.stderr)
+        print("  备份可能在 .filmsim-backup/ 下被手工删过。确认后可用 --force 改为直接删除。",
+              file=sys.stderr)
+        return 1
+    for nm, why in restore_failed:
+        print(f"  ! --force：{nm} 无法恢复（{why}），改为直接删除", file=sys.stderr)
+        (dest / nm).unlink()
+        entries.pop(nm, None)
+        deleted += 1
+
     manifest["entries"] = sorted(entries.values(), key=lambda e: e["name"])
     save_manifest(dest, manifest)
-    print(f"\n✓ 已回滚 {removed} 个文件（清单同步更新；基础配置文件未动）")
+    print(f"\n✓ 已回滚 {restored + deleted} 个文件"
+          f"（恢复原文件 {restored}，删除新增 {deleted}；清单同步更新，基础配置文件未动）")
     if skipped and args.force:
         print(f"  注意：--force 下忽略了 {len(skipped)} 个未经确认的文件，它们仍在目标目录里。")
     return 0

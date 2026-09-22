@@ -181,10 +181,31 @@ def main() -> int:
         "--protect", "0.0", "--out", cal)
     out4 = work / "o4"
     r = run(SCRIPTS / "lut-to-ccprofile.py", "--dir", luts, "--out", out4,
-            "--space", "display", "--calibration", cal, "--protect", "0.68")
+            "--space", "display", "--calibration", cal, "--protect", "0.68",
+            "--mode", "brightness")
     n4 = len(list(out4.glob("*.xmp"))) if out4.is_dir() else 0
     check("标定 protect 与本次不一致 → 拒绝且不生成", r.returncode != 0 and n4 == 0,
           f"退出码={r.returncode} 产物={n4}")
+
+    # ── 5b. 生成时必须声明 --mode，且要与标定文件一致 ─────────────────
+    out5 = work / "o5"
+    r = run(SCRIPTS / "lut-to-ccprofile.py", "--dir", luts, "--out", out5,
+            "--space", "display", "--calibration", cal, "--protect", "0.0")
+    check("用 --calibration 但不声明 --mode → 拒绝", r.returncode != 0,
+          f"退出码={r.returncode}")
+    r = run(SCRIPTS / "lut-to-ccprofile.py", "--dir", luts, "--out", out5,
+            "--space", "display", "--calibration", cal, "--protect", "0.0", "--mode", "midgray")
+    check("--mode 与标定文件不一致 → 拒绝", r.returncode != 0, f"退出码={r.returncode}")
+
+    # ── 5c. 参数范围：越界必须在入口被拒绝 ────────────────────────────
+    r = run(SCRIPTS / "lut-to-ccprofile.py", "--dir", luts, "--out", work / "o6", "--protect", "1.5")
+    check("--protect 越界 → 拒绝", r.returncode != 0, f"退出码={r.returncode}")
+    r = run(SCRIPTS / "lut-to-ccprofile.py", "--dir", luts, "--out", work / "o6", "--divisions", "999")
+    check("--divisions 越界 → 拒绝", r.returncode != 0, f"退出码={r.returncode}")
+    mk_img(work / "p2.png")
+    r = run(SCRIPTS / "lr-filmsim.py", "--lut", lut, "--out", work / "o7", "--strength", "-0.5",
+            work / "p2.png")
+    check("--strength 越界 → 拒绝", r.returncode != 0, f"退出码={r.returncode}")
 
     # ── 6. 安装器：冲突不覆盖、备份、清单、精确回滚 ─────────────────────
     src, dest = work / "psrc", work / "pdest"
@@ -220,9 +241,20 @@ def main() -> int:
 
     shutil.copy2(src / "LookB.xmp", dest / "LookB.xmp")
     r = run(SCRIPTS / "install_ccprofiles.py", "remove", "--src", src, "--dest", dest)
-    check("干净回滚：清单内文件被删，用户的文件保留",
-          r.returncode == 0 and not (dest / "LookA.xmp").exists()
-          and not (dest / "LookB.xmp").exists() and (dest / "UserOwn.xmp").exists(),
+    check("清理回滚：新增文件被删；被覆盖的旧文件**恢复成原内容**",
+          r.returncode == 0 and not (dest / "LookB.xmp").exists()
+          and (dest / "UserOwn.xmp").exists()
+          and sha(dest / "LookA.xmp") == conflict_hash,
+          f"退出码={r.returncode} LookA 恢复={'是' if sha(dest / 'LookA.xmp') == conflict_hash else '否'}")
+
+    # 备份被手工删掉时：必须中止，不能假装恢复成功
+    r = run(SCRIPTS / "install_ccprofiles.py", "install", "--src", src, "--dest", dest, "--force")
+    for b in (dest / ".filmsim-backup").rglob("*.xmp"):
+        b.unlink()
+    before_hash = sha(dest / "LookA.xmp")
+    r = run(SCRIPTS / "install_ccprofiles.py", "remove", "--src", src, "--dest", dest)
+    check("备份丢失时中止回滚，不留下半完成状态",
+          r.returncode != 0 and sha(dest / "LookA.xmp") == before_hash,
           f"退出码={r.returncode}")
 
     # ── 7. 嵌套目录：脚本只扫顶层，且这必须是"失败"而不是"成功"───────
@@ -253,7 +285,50 @@ def main() -> int:
                 ghosts.append(f"{f.relative_to(REPO)} → {nm}")
     check("文档没有引用不存在的脚本", not ghosts, f"{len(ghosts)} 处：{ghosts[:3]}")
 
-    # ── 9. verify-delivery：坏样本必须 fail、好交付必须 pass ───────────
+    # ── 9. SKILL.md 的执行闸门必须还在（防止后续编辑把安全约束删掉）──────
+    skill = (REPO / "SKILL.md").read_text(encoding="utf-8")
+    gates = [
+        ("原地覆盖必须显式", "--in-place"),
+        ("安装前必须先看清单", "--dry-run"),
+        ("零产物即失败", "零产物 = 失败"),
+        ("任意文件名默认处理", "默认处理任意"),
+        ("标定与生成同口径", "同口径"),
+        ("验收凭证不要手填", "不要手填"),
+        ("失败恢复有据可依", "失败处理与恢复"),
+    ]
+    missing_gates = [name for name, needle in gates if needle not in skill]
+    check("SKILL.md 保留全部执行闸门", not missing_gates, f"缺失：{missing_gates}")
+
+    # 未知工作目录：SKILL.md 里每条命令都必须用 $SKILL_ROOT / 绝对路径，不能裸写 scripts/
+    # 只看**命令**行（以 python3 / bash / $PY 开头）；目录树、行内提及不算命令
+    bare = []
+    for ln in skill.split("\n"):
+        t = ln.strip()
+        if not t.startswith(("python3 ", "bash ", '"$PY" ', "$PY ")):
+            continue
+        if "scripts/" in t and "SKILL_ROOT" not in t and "$PY" not in t:
+            bare.append(t[:70])
+    check("SKILL.md 命令不依赖当前工作目录", not bare, f"裸调用 {len(bare)} 处：{bare[:2]}")
+
+    # 危险参数必须在 SKILL.md 里被明确标注（不能只在 --help 里）
+    risky = {"--force": "确认", "--in-place": None, "--no-backup": None}
+    no_warn = [flag for flag in risky if flag in skill and "确认" not in skill]
+    check("危险参数在 SKILL.md 里有确认要求", not no_warn, f"{no_warn}")
+
+    # ── 10. 文档漂移：README 不得重新出现已知的旧说法 ──────────────
+    STALE = [
+        (r"--allow-unknown` is required|必须加 `--allow-unknown`", "任意文件名需要 --allow-unknown"),
+        (r"still exit successfully|仍然\*\*返回成功\*\*", "零产物可能算成功"),
+        (r"does not enforce matching|不强制\*\*两者匹配", "说不强制校准口径"),
+        (r"Default is destructive in-place|默认\*\*原地覆盖\*\*", "说图片默认原地覆盖"),
+        (r"are not escaped|没有转义", "说 XML 特殊字符未转义"),
+        (r"No production command|没有任何生产命令", "说没有命令生成 verification.json"),
+    ]
+    docs = (REPO / "README.md").read_text(encoding="utf-8") + (REPO / "README.zh.md").read_text(encoding="utf-8")
+    drift = [name for pat, name in STALE if re.search(pat, docs)]
+    check("README 没有回归到已知旧说法", not drift, f"回归：{drift}")
+
+    # ── 11. verify-delivery：坏样本必须 fail、好交付必须 pass ───────────
     vd = SCRIPTS / "verify-delivery.py"
     r = run(vd, "--profile", HERE / "fixtures/bad/portra_noprotect.xmp", "--out", work / "v_bad.json")
     v_bad = json.loads((work / "v_bad.json").read_text(encoding="utf-8")) if (work / "v_bad.json").exists() else {}
@@ -271,16 +346,26 @@ def main() -> int:
         "--protect", "0.68", "--out", good_cal)
     good_out = work / "good_profiles"
     r = run(SCRIPTS / "lut-to-ccprofile.py", "--dir", good_luts, "--out", good_out,
-            "--space", "display", "--calibration", good_cal, "--protect", "0.68")
+            "--space", "display", "--calibration", good_cal, "--protect", "0.68",
+            "--mode", "brightness")
     prof = next((p for p in sorted(good_out.glob("*.xmp")) if "wrapper" not in p.name), None)
     v_good_path = work / "v_good.json"
     r = run(vd, "--profile", prof, "--lut", good_luts / "Look.cube",
             "--calibration", good_cal, "--out", v_good_path)
     v_good = json.loads(v_good_path.read_text(encoding="utf-8")) if v_good_path.exists() else {}
-    check("合格交付 → verdict=pass 且未复算项被显式标出",
-          r.returncode == 0 and v_good.get("verdict") == "pass"
+    check("合格交付但缺图片 → verdict=partial（不是 pass）且非零退出",
+          r.returncode != 0 and v_good.get("verdict") == "partial"
           and "brightness_ratio" in v_good.get("unrecomputed", []),
-          f"verdict={v_good.get('verdict')} unrecomputed={len(v_good.get('unrecomputed', []))}")
+          f"verdict={v_good.get('verdict')} 退出码={r.returncode}")
+    r2 = run(vd, "--profile", prof, "--lut", good_luts / "Look.cube", "--calibration", good_cal,
+             "--require-images", "--out", work / "v_req.json")
+    v_req = json.loads((work / "v_req.json").read_text(encoding="utf-8")) if (work / "v_req.json").exists() else {}
+    check("任务要求图片级验收却没给图片 → verdict=fail",
+          r2.returncode != 0 and v_req.get("verdict") == "fail", f"verdict={v_req.get('verdict')}")
+    r3 = run(vd, "--profile", prof, "--lut", good_luts / "Look.cube", "--calibration", good_cal,
+             "--allow-partial", "--out", work / "v_ap.json")
+    check("--allow-partial 时才允许 partial 返回 0",
+          r3.returncode == 0, f"退出码={r3.returncode}")
     check("verification.json 不把未复算项当通过",
           all(v_good.get("checks", {}).get(k) is None for k in
               ("brightness_ratio", "top5pct_median", "pct_ge_250", "highlight_detail_std")),

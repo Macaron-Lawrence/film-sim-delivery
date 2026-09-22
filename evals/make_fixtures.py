@@ -74,6 +74,49 @@ def stable_uuid(*parts: str) -> str:
     return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest().upper()
 
 
+def synth_photo(path: Path, w: int = 384, h: int = 256, seed: int = 20260919) -> None:
+    """确定性的合成"照片"：中性渐变 + 一片有层次的亮部 + 少量真正爆掉的高光。
+
+    为什么要它：图片级四项指标（亮度比 / 最亮 5% 中位 / ≥250 占比 / 高光细节 std）
+    必须有图片才能算。此前 eval 只给 LUT 却要求这四项，等于逼候选去编数字或抄示例值。
+
+    形状是按"这个指标要能分辨好坏"来设计的，而不是随便一片白：
+      · 亮部（200→249 的滚降 + 细纹理）——本意就是"接近但没 clip"，护高光生效时它基本不动，
+        而没做护高光时会被胶片肩部整体压低，std 明显掉；
+      · 高光斑（253–255，约占画面 1.5%）——真正的"接近纯白"，用来测 ≥250 占比与白点；
+    刻意**避免**把大量像素堆在 250–252 这一档：protect=0.68 的 blend 在输入 <250.6 时会把
+    输出压到 250 以下，所以"单调渐变铺满高光区"的 fixture 会让 ≥250 保留率天然掉到 ~77%，
+    那是 fixture 的人为伪影，不是交付质量问题（实测过：线性渐变时 250–252 占 ≥250 像素的 38%）。
+    真实照片的 ≥250 像素以 253–255 为主，这个 fixture 按那种分布来造。
+    """
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:h, 0:w]
+    base = 40 + 150 * (x / (w - 1))
+    img = np.stack([base, base * 0.93, base * 0.86], -1).astype(np.float64)
+
+    # ① 亮部滚降：200 → 249，带细纹理（护高光是否生效看这里）
+    rh, rw = int(h * 0.45), int(w * 0.45)
+    oy, ox = int(h * 0.10), int(w * 0.48)
+    gy, gx = np.mgrid[0:rh, 0:rw]
+    ramp = 200 + 49 * (gx / max(1, rw - 1))
+    tex = np.sin(gx * 0.55) * 6 + rng.normal(0, 2.0, (rh, rw))
+    patch = np.clip(ramp + tex, 0, 255)
+    for c, off in enumerate((0, -3, -6)):
+        img[oy:oy + rh, ox:ox + rw, c] = patch + off
+
+    # ② 高光斑：253–255，小而真（真正的近白像素聚集在这里）
+    sh, sw = int(h * 0.10), int(w * 0.10)
+    sy, sx = int(h * 0.32), int(w * 0.58)
+    spec = 254.0 + rng.normal(0, 0.6, (sh, sw))
+    for c in range(3):
+        img[sy:sy + sh, sx:sx + sw, c] = np.clip(spec, 0, 255)
+
+    img += rng.normal(0, 1.2, img.shape)
+
+    from PIL import Image
+    Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)).save(path)
+
+
 def write_lf(path: Path, text: str) -> None:
     """按 LF 写文件。注意不能用 Path.write_text(newline=...)：那是 Python 3.10+ 才有的参数，
     在 3.9 上直接 TypeError（CI 的 3.9 格子就是这么红的）。"""
@@ -99,6 +142,19 @@ def generate(out: Path, quiet: bool = False) -> dict:
 
     (out / "luts").mkdir(parents=True, exist_ok=True)
     (out / "bad").mkdir(parents=True, exist_ok=True)
+    (out / "photos").mkdir(parents=True, exist_ok=True)
+    (out / "dest").mkdir(parents=True, exist_ok=True)
+
+    # 确定性测试照片：图片级指标的唯一合法来源
+    photo = out / "photos" / "highlight_test.png"
+    synth_photo(photo)
+    say(f"✓ {photo}")
+
+    # "用户自己原有的同名配置文件"：安装冲突场景用它，断言卸载后能被恢复
+    own = out / "dest" / "portra_like（显示域HP）.xmp"
+    write_lf(own, '<x:xmpmeta>这是用户原有的同名配置，不是本工具生成的。'
+                  'PIECE-OF-USER-DATA-4F2A</x:xmpmeta>')
+    say(f"✓ {own}")
 
     cc = load_mod("cc", REPO / "scripts" / "lut-to-ccprofile.py")
     cal = load_mod("cal", REPO / "scripts" / "calibrate-luts.py")
@@ -136,6 +192,7 @@ def generate(out: Path, quiet: bool = False) -> dict:
     m1, w1 = white_and_mid(cc, out / "bad" / "portra_noprotect.xmp")
     m2, w2 = white_and_mid(cc, out / "bad" / "portra_spacemismatch.xmp")
     say(f"\n签名对照：缺护高光 中灰 {m1:.1f} / 纯白 {w1:.1f}；空间错配 中灰 {m2:.1f} / 纯白 {w2:.1f}")
+    say(f"   测试照片 {photo.name} / 用户原有配置 {own.name}（供独立复算与回滚场景使用）")
     ok = (SIG_NOPROTECT["mid"][0] <= m1 <= SIG_NOPROTECT["mid"][1]
           and SIG_NOPROTECT["white"][0] <= w1 <= SIG_NOPROTECT["white"][1]
           and SIG_MISMATCH["mid"][0] <= m2 <= SIG_MISMATCH["mid"][1]

@@ -63,11 +63,16 @@ LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
 # 阈值（与 calibration.md §3 / verification-schema.md 一致）
 #
-# 注意：这些绝对阈值来自早期文档（`原图约 4%`、`原图约 6.1`），而那批测试条件未随仓库归档
-# ——见 references/calibration.md §0。所以给 --images 时，判定改为「不低于下面这个绝对目标，
-# 同时不低于相对原图基准的下限」：绝对目标在浅高光的图上本来就达不到（例如原图只有 1% 的
-# ≥250 像素时，要求输出 ≥2.5% 是无意义的）。两个条件取对交付更宽松的那个，但**绝不允许
-# 输出比原图还差**。实际用了哪条会写进 verification.json 的 thresholds_used。
+# 关于图片级指标，判定规则是**两段式**（代码与文档必须一致，此前这里是矛盾的）：
+#
+#   绝对目标可达（原图自己就达到该目标）→ 必须达到**绝对目标**（更严）
+#   绝对目标不可达（原图自己都达不到）  → 按"保留率"判：输出 ≥ 比例 × 原图，并把
+#                                        absolute_applicable 记成 false + 原因
+#
+# 为什么不用 min(绝对, 比例×原图)：那会在原图本身达标时反而放宽门槛。之所以需要第二段，
+# 是因为绝对目标来自未归档的早期报告（`原图约 4%`、`原图约 6.1`，见 calibration.md §0），
+# 在浅高光的照片上（原图只有 1% 的 ≥250 像素）要求输出 ≥2.5% 本身不成立。
+# 两段都保证同一件事：**输出不得比原图差**。实际用了哪条写进 thresholds_used。
 T = {
     "decode_error_lsb": 1.0,
     "mid_gray_out": (118.0, 145.0),
@@ -201,6 +206,10 @@ def main() -> int:
                     help="校准 JSON：按 LUT 文件名取当时用的 pre_gain/protect，避免手抄错")
     ap.add_argument("--out", default="verification.json")
     ap.add_argument("--declare", default="", help="另一份 verification.json：与其逐项比对")
+    ap.add_argument("--require-images", action="store_true",
+                    help="本次验收要求图片级指标：没给 --images 则判 fail（而不是 partial）")
+    ap.add_argument("--allow-partial", action="store_true",
+                    help="允许 verdict=partial 时返回 0（默认 partial 返回非零）")
     args = ap.parse_args()
 
     cc = load_cc()
@@ -306,7 +315,7 @@ def main() -> int:
             lo2, hi2 = T[k]; thresholds_used[k] = [lo2, hi2]
             need(k, lo2 <= v <= hi2)
             continue
-        # 相对原图基准的下限（原图有多好，输出至少要保住其中一部分）
+        # 两段式：绝对目标可达就按绝对判，不可达才退到保留率（见文件头的说明）
         rel = {
             "top5pct_median": ("src_top5pct_median", 0.95),
             "pct_ge_250": ("src_pct_ge_250", 0.80),
@@ -314,10 +323,17 @@ def main() -> int:
         }[k]
         src_key, frac = rel
         src_val = checks.get(src_key)
-        floor = T[k]
-        if isinstance(src_val, (int, float)):
-            floor = min(T[k], round(frac * src_val, 3))
-        thresholds_used[k] = {"absolute_target": T[k], "applied_floor": floor,
+        abs_target = T[k]
+        applicable = isinstance(src_val, (int, float)) and src_val >= abs_target
+        if applicable or not isinstance(src_val, (int, float)):
+            floor = abs_target
+            basis = "absolute_target" if applicable else "absolute_target(无原图基准)"
+        else:
+            floor = round(frac * src_val, 3)
+            basis = "retention_floor"
+        thresholds_used[k] = {"absolute_target": abs_target,
+                              "absolute_applicable": bool(applicable),
+                              "applied_floor": floor, "basis": basis,
                               "source_baseline": src_val, "source_fraction": frac}
         need(k, v >= floor)
 
@@ -337,7 +353,20 @@ def main() -> int:
                 if abs(float(dchecks[k]) - float(mine)) > 0.05:
                     mismatches.append({"field": k, "declared": dchecks[k], "recomputed": mine})
 
-    verdict = "pass" if (not fails and not mismatches) else "fail"
+    # ── 三态判定：pass / partial / fail ──
+    # partial = 所有"算出来的"检查都通过，但有指标没算（缺输入）——**不等于通过**。
+    if fails or mismatches:
+        verdict = "fail"
+    elif unrecomputed:
+        if args.require_images and any(
+                k in unrecomputed for k in ("brightness_ratio", "top5pct_median",
+                                            "pct_ge_250", "highlight_detail_std")):
+            verdict = "fail"
+            fails.append("本任务要求图片级验收，但没有可用的 --images（指标未复算）")
+        else:
+            verdict = "partial"
+    else:
+        verdict = "pass"
     out = {
         "skill": "film-sim-delivery",
         "verifier": "scripts/verify-delivery.py",
@@ -363,9 +392,10 @@ def main() -> int:
         "declaration_mismatches": mismatches,
         "verdict": verdict,
         "notes": (
-            "所有非 null 的 checks 都是本脚本从产物算出来的。"
-            "unrecomputed 列出的项缺少输入（源 LUT 或真实照片），**不代表通过**。"
-            "对照 references/verification-schema.md 的阈值。"
+            "所有非 null 的 checks 都是本脚本从产物算出来的。verdict 为三态："
+            "pass=必需项全部复算并通过；partial=算出来的都过了但有项缺输入没算（不等于通过）；"
+            "fail=有项不达标，或本任务要求图片级验收却没给 --images。"
+            "图片级阈值按两段式判定，见 thresholds_used.basis。"
         ),
     }
     Path(args.out).write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -402,7 +432,15 @@ def main() -> int:
         if "decode_error_lsb" in unrecomputed:
             print("  想复算编码误差就加 --lut <源 .cube> --pre-gain G --protect P")
     print(f"\nverdict: {verdict}   →  {args.out}")
-    return 0 if verdict == "pass" else 1
+    if verdict == "partial":
+        print("  说明：结构类检查全部通过，但有指标未复算（缺输入）——**这不是通过**。"
+              "\n        要判 pass 请补齐输入：--lut/--calibration（编码误差）与 --images（图片级四项）。"
+              "\n        若本次确实不需要图片级验收，加 --allow-partial 让它返回 0。")
+    if verdict == "pass":
+        return 0
+    if verdict == "partial":
+        return 0 if args.allow_partial else 3
+    return 1
 
 
 if __name__ == "__main__":

@@ -457,6 +457,9 @@ def main() -> int:
     ap.add_argument("--label", default="", help="追加到名字里的标签，例如 亮度匹配")
     ap.add_argument("--calibration", default=None,
                     help="calibrate-luts.py 产出的 JSON；按 LUT 名取各自的 pre-gain")
+    ap.add_argument("--mode", choices=["midgray", "brightness"], default=None,
+                    help="声明这份标定是用哪个模式算的；与 --calibration 一起用时必须给，"
+                         "脚本会核对，不一致直接拒绝（标定契约的另一半）")
     ap.add_argument("--only-known", action="store_true",
                     help="只处理内置 NAMES 表里的胶片名；默认处理**任意文件名**")
     ap.add_argument("--allow-unknown", action="store_true",
@@ -467,6 +470,22 @@ def main() -> int:
                     help="护高光阈值 0~1（如 0.62=亮度超过 158/255 的部分平滑混回原样，"
                          "L=1.0 时输出=输入，纯白保持 255，不再受胶片肩部压制）")
     args = ap.parse_args()
+
+    # 参数范围校验：宁可在这里拒绝，也不要产出一个看着正常、其实参数已经越界的交付
+    bad = []
+    if not (1 <= args.divisions <= 64):
+        bad.append(f"--divisions {args.divisions}（要求 1–64）")
+    if not (0.0 <= args.protect < 1.0):
+        bad.append(f"--protect {args.protect}（要求 0 ≤ protect < 1）")
+    if not (0.01 <= args.pre_gain <= 8.0):
+        bad.append(f"--pre-gain {args.pre_gain}（要求 0.01–8.0）")
+    if args.space not in ("display", "linear", "both"):
+        bad.append(f"--space {args.space}（要求 display / linear / both）")
+    if bad:
+        print("✗ 参数越界，已中止：", file=sys.stderr)
+        for b in bad:
+            print(f"    {b}", file=sys.stderr)
+        return 2
 
     out_dir = Path(args.out); out_dir.mkdir(parents=True, exist_ok=True)
     cubes = sorted(glob.glob(os.path.join(args.dir, "*.cube"))
@@ -491,6 +510,15 @@ def main() -> int:
         # 标定与生成必须同口径，否则交付的影调不是标定时承诺的那个。
         # 过去这里只读 pre_gain，protect 不一致也照样生成——由脚本拒绝，而不是靠文档提醒。
         modes = {str(v.get("mode")) for v in calib.values() if isinstance(v, dict) and v.get("mode")}
+        if not args.mode:
+            print("\n✗ 用了 --calibration 就必须同时声明 --mode（midgray 或 brightness）。\n"
+                  "  标定与生成必须同口径，而「生成时用的是哪个模式」只有调用方知道；"
+                  "不声明就无法核对，等于把契约交给运气。", file=sys.stderr)
+            return 2
+        if modes and args.mode not in modes:
+            print(f"\n✗ --mode {args.mode} 与标定文件里记录的模式 {sorted(modes)} 不一致，已中止。",
+                  file=sys.stderr)
+            return 1
         bad = []
         for stem, v in sorted(calib.items()):
             if not isinstance(v, dict):
@@ -556,10 +584,14 @@ def main() -> int:
           except Exception as exc:  # noqa: BLE001
             failed.append((stem, f"{type(exc).__name__}: {exc}"))
             print(f"✗ {stem}: {exc}", file=sys.stderr)
-            # 不留半成品：失败的文件从输出目录清掉，免得后续 install 把坏文件装进 Adobe
-            for bad in out_dir.glob(f"*{stem}*.xmp"):
+            # 不留半成品：只删本次刚写出的那两个**确定的**路径。
+            # 注意不能用 glob(f"*{stem}*.xmp")：stem 里若含 * ? [ ] 会被当通配符，
+            # 实测 stem="*" 时该模式会命中并删除输出目录里其他交付文件。
+            name_try = f"{NAMES.get(stem, stem)}（{TITLE[sp]}{args.label}）"
+            for bad in (out_dir / f"{name_try}.xmp", out_dir / f"{name_try} wrapper.xmp"):
                 try:
-                    bad.unlink()
+                    if bad.is_file():
+                        bad.unlink()
                 except OSError:
                     pass
     print(f"\n生成 {len(made)} 个创意配置文件（含 wrapper 预设）→ {out_dir}")

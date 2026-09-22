@@ -52,7 +52,8 @@ def main() -> int:
         return 1
 
     r = run(SCRIPTS / "lut-to-ccprofile.py", "--dir", luts, "--out", work,
-            "--space", "display", "--calibration", cal, "--protect", "0.68", "--label", "HP")
+            "--space", "display", "--calibration", cal, "--protect", "0.68",
+            "--mode", "brightness", "--label", "HP")
     prof = next((p for p in sorted(work.glob("*.xmp")) if "wrapper" not in p.name), None)
     if r.returncode != 0 or prof is None:
         print("✗ 生成失败：", r.stdout[-400:], r.stderr[-400:])
@@ -64,10 +65,12 @@ def main() -> int:
         "evidence": {"white_before": 216.8, "white_after": 255.0, "mid_after": 125.0},
     }, ensure_ascii=False), encoding="utf-8")
 
+    # 带上 fixture 照片，这样图片级四项也能被复算 → 断言必须是 pass（不带图片只会是 partial）
     r = run(SCRIPTS / "verify-delivery.py", "--profile", prof, "--lut", luts / "portra_like.cube",
-            "--calibration", cal, "--out", work / "verification.json")
+            "--calibration", cal, "--images", FIXTURES / "photos/highlight_test.png",
+            "--require-images", "--out", work / "verification.json")
     if r.returncode != 0:
-        print("✗ verify-delivery 未通过：", r.stdout[-600:], r.stderr[-300:])
+        print("✗ verify-delivery 未通过：", r.stdout[-800:], r.stderr[-300:])
         fails.append("verify-delivery 在合格交付上没给出 pass")
 
     # ② 评分器应当满分，并且自己复算了 decode_error_lsb
@@ -82,6 +85,16 @@ def main() -> int:
         fails.append("评分器的 decode_error_lsb 独立复算未通过")
     if "图片级指标" not in out:
         fails.append("评分器没有对图片级指标声明做出处理")
+
+    # ②b. 不带图片时只能是 partial，不能是 pass
+    r = run(SCRIPTS / "verify-delivery.py", "--profile", prof, "--lut", luts / "portra_like.cube",
+            "--calibration", cal, "--out", work / "v_partial.json")
+    try:
+        vp = json.loads((work / "v_partial.json").read_text(encoding="utf-8"))
+    except Exception:
+        vp = {}
+    if vp.get("verdict") != "partial" or r.returncode == 0:
+        fails.append(f"缺图片时应为 partial 且非零退出（实际 {vp.get('verdict')} / {r.returncode}）")
 
     # ③ 反例：把交付文件删掉，评分器必须不是满分（防止"永远绿"）
     shutil.rmtree(work / "luts")

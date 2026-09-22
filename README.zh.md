@@ -15,7 +15,7 @@
 | 直接处理图片 | 由 `scripts/lr-filmsim.py` 实现，支持 `.cube` 与 HaldCLUT 输入。TIFF 族走 `tifffile`，其他 Pillow 支持的格式走 Pillow。**原地覆盖不再是默认行为**：不给 `--out DIR` 或不显式写 `--in-place` 就拒绝运行；输出目录里已有同名文件时不给 `--overwrite` 就拒绝覆盖；任何原地写入前都会先写时间戳备份。`--calibration` 复用逐卷标定增益，`--protect` 与配置文件路径共用同一套护高光口径。`scripts/apply-look.sh` 是 POSIX 便捷包装。 |
 | 近似 XMP 预设 | 由 `scripts/lut-to-xmp.py` 实现，覆盖 8 个硬编码胶片名。它推导色调曲线、HSL、颜色分级、饱和度、自然饱和度、颗粒、锐化、降噪、暗角参数。这是**近似**，不是编码的 3D LUT，且**没有建立可信的保真度百分比**。 |
 | 曝光标定 | 由 `scripts/calibrate-luts.py` 实现。用二分法对每个 LUT 求 `pre_gain`，目标可以是中点，也可以是中性灰渐变带的加权亮度。处理顶层 `.cube`、`.png`、`.tif` 文件。 |
-| 安装与卸载 | 由 `scripts/install_ccprofiles.py` 实现；`scripts/install-lr-ccprofiles.sh` 在 POSIX 系统上包装它。`list` 与 `install --dry-run` 先给计划；会覆盖同名但内容不同的文件时**直接中止，除非显式 `--force`**；被覆盖的旧文件备份到 `.filmsim-backup/<时间戳>/`；每次安装都更新 `.filmsim-manifest.json`；`remove` **只删清单里记录、且 SHA-256 仍匹配**的文件。**不安装 DCP 基底配置文件**。 |
+| 安装与卸载 | 由 `scripts/install_ccprofiles.py` 实现；`scripts/install-lr-ccprofiles.sh` 在 POSIX 系统上包装它。`list` 与 `install --dry-run` 先给计划；会覆盖同名但内容不同的文件时**直接中止，除非显式 `--force`**；被覆盖的旧文件备份到 `.filmsim-backup/<时间戳>/`；每次安装都更新 `.filmsim-manifest.json`；`remove` 会**回到安装前的状态**：被覆盖过的文件从备份**恢复**（核对哈希），本次新增的删除，安装后被用户改过的文件会让整次回滚中止。**不安装 DCP 基底配置文件**。 |
 | 基础 LUT 质检 | 由 `scripts/qa-luts.py` 实现。报告抽样中点、白点、黑点与对比度，并标记灰度响应偏弱或反相的情况。它**不**检测单调性、截断、色域范围，也不测与恒等变换的偏差。 |
 | 拼对比图 | 由 `scripts/try-looks.py` 实现。把顶层 `.cube` 与 `.png` LUT 施加到一张 Pillow 可读的图片上，输出 JPEG 预览并拼成带标注的 JPEG 大图。 |
 | 素材抓取与筛选 | `scripts/fetch_sources.sh` 列出或下载指定的上游来源。`scripts/curate-rt-halclut.py` 从 RawTherapee HaldCLUT 树里复制指定子集或全部 PNG。这些流程受上游许可证约束，并可能占用大量磁盘与带宽。 |
@@ -258,7 +258,7 @@ python3 scripts/install_ccprofiles.py remove \
 
 | 入口 | 输入与输出 | 主要选项 | 副作用与校验 |
 |---|---|---|---|
-| `scripts/lut-to-ccprofile.py` | 顶层 `.cube` / `.png` / `.tif` LUT → 配置文件 XMP + 包装 XMP | `--dir`, `--out`, `--only`, `--only-known`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--group`, `--protect` | 默认处理任意文件名。创建输出目录，覆盖同名 XMP。解码每张编码后的表（误差 < 1 个 16 位 LSB），并用 XML 解析器复读每个写出的文件，失败即删除。标定口径（`mode`/`protect`）与本次不一致时拒绝运行。**零产物返回非零退出码。不测 Adobe 宿主。** |
+| `scripts/lut-to-ccprofile.py` | 顶层 `.cube` / `.png` / `.tif` LUT → 配置文件 XMP + 包装 XMP | `--dir`, `--out`, `--only`, `--only-known`, `--divisions`, `--space`, `--base-profile`, `--base-digest`, `--pre-gain`, `--calibration`, `--mode`, `--group`, `--protect` | 默认处理任意文件名。创建输出目录，覆盖同名 XMP。解码每张编码后的表（误差 < 1 个 16 位 LSB），并用 XML 解析器复读每个写出的文件，失败即删除。标定口径（`mode`/`protect`）与本次不一致时拒绝运行。**零产物返回非零退出码。不测 Adobe 宿主。** |
 | `scripts/calibrate-luts.py` | 顶层 LUT 文件 → JSON | `--mode`, `--protect`, `--merge`, `--out` | 写 JSON。二分法**假定**得分在增益 0.10–4.0 区间单调，且不检查是否成功夹住区间。`--merge` 会保留已有的无关记录。 |
 | `scripts/lr-filmsim.py` | `.cube` 或 HaldCLUT + 图片 → 处理后的图片 | `--out`, `--in-place`, `--overwrite`, `--calibration`, `--protect`, `--suffix`, `--strength`, `--linear-pipeline`, `--pre-gain`, `--info` | **必须显式选择落盘位置**；原地写入一定先备份（`.filmsim-backups/`）；输出重名默认拒绝。使用原子临时文件替换。 |
 | `scripts/cube-to-hald.py` | 顶层 `.cube` → HaldCLUT PNG | `--level`, `--pre-gain`, `--only`, `--out` | 创建输出目录，覆盖同名 PNG。**不做往返比对。** |
@@ -271,7 +271,7 @@ python3 scripts/install_ccprofiles.py remove \
 | `scripts/fetch_sources.sh` | 具名上游来源 → 下载或安装工具 | `--list`, `rt`, `spectra`, `fuji`, `spektra` | 需要联网。可能下载数百 MB、覆盖式解压、创建虚拟环境、clone 仓库或安装工具。 |
 | `scripts/curate-rt-halclut.py` | RawTherapee HaldCLUT 树 → 复制出的 PNG 子集 | `--src`, `--dst`, `--all`, `--list` | 即使在 `--list` 模式下也会创建目标目录，并覆盖重名的已复制文件。**不跑 LUT 质检。** |
 | `scripts/bake-spectral-luts.py` | 内置光谱胶片任务 → `.cube` | `--out`, `--size`, `--only`, `--list`, `--noise` | 导入并执行第三方 `spectral_film_lut`；在输出目录写入。`--noise` 无效果。 |
-| `scripts/verify-delivery.py` | 交付的配置文件（+ 可选源 LUT / 标定 / 真实照片）→ `verification.json` | `--profile`, `--lut`, `--calibration`, `--pre-gain`, `--protect`, `--images`, `--declare`, `--out` | 只读输入，只写输出 JSON。所有非 null 的 check 都由它算出；算不出来的列在 `unrecomputed`，**不作为通过**。图片级指标以现场图片为额外下限，绝不比绝对目标更宽松。 |
+| `scripts/verify-delivery.py` | 交付的配置文件（+ 可选源 LUT / 标定 / 真实照片）→ `verification.json` | `--profile`, `--lut`, `--calibration`, `--mode`, `--pre-gain`, `--protect`, `--images`, `--require-images`, `--allow-partial`, `--declare`, `--out` | 只读输入，只写输出 JSON。判定是三态：`pass`（退出码 0，必需项全部复算通过）/ `partial`（退出码 3，算出来的都过了但有指标缺输入——**不是通过**）/ `fail`（退出码 1）。图片级阈值两段式：原图达到绝对目标就按绝对判，否则按保留率下限，实际用的哪条写在 `thresholds_used.basis`。 |
 | `scripts/selftest.py` | 生成的合成 LUT → 临时标定与 XMP 产物 | `--work` | 不给 `--work` 时，成功后删除其临时目录。检查表格 MD5 约定、编解码误差、中点与被保护的白点。 |
 | `evals/test_safety.py` | 临时工作区 → 通过/失败报告 | — | 断言：不给 `--in-place` 不会原地写；不会静默覆盖；零产物退出非零；任意文件名与 XML 特殊字符可用；安装冲突会中止；回滚按清单精确执行；标定口径不一致会被拒；文档不引用不存在的脚本。 |
 | `evals/test_grader.py` | 造一个已知正确的候选并打分 | — | 断言评分器给它满分、删掉产物后不再满分、且真的复算了 `decode_error_lsb`。 |
@@ -362,9 +362,9 @@ CI **不测试**第三方下载、光谱烘焙、原生 Windows 上的 shell 包
 - 生成的 XMP 会对文件名、标签、描述、组名做转义，并且每个写出的文件都用标准 XML 解析器复读；复读失败的会被删掉而不是留在盘上。属性里只转义 `&`、`<`、`>`、双引号——**故意不转义单引号**，因为表数据用的 Adobe base85 字母表里就含单引号。
 - `lut-to-ccprofile.py` 默认处理任意文件名，`--only-known` 才按内置名表过滤。生成零个配置文件时**返回非零退出码**，跳过不会再被当成成功。
 - 配置文件与它的包装预设都用 `--group`，自定义分组时这一对保持一致。
-- 标定 JSON 记录了 `mode` 与 `protect`，编码器**会强制**它们一致：某条标定的 `protect` 与本次调用不符、或缺少 `protect`/`pre_gain` 字段，都会在写出任何文件之前中止；同一份标定里混用多种 `mode` 也会被拒。
+- 标定 JSON 记录了 `mode` 与 `protect`，编码器**两者都强制**：用 `--calibration` 时必须显式声明 `--mode`，且要与标定里记录的一致；`protect` 不符或某条缺少 `protect`/`pre_gain`，都会在写出任何文件之前中止。
 - `--base-profile` 可以指定自定义配置文件，但 `--base-digest` 只在同时提供了 `--base-profile` 时才被使用。脚本**不校验**这两个值是否对应到已安装的 DCP 文件。
-- `--protect`、`--strength`、`--pre-gain`、`--divisions` 以及若干尺寸值**仍然缺少完整的范围校验**。坏值可能导致无效输出、极端输出或运行时失败。（这轮安全修复覆盖的是破坏性默认与契约不一致，不是所有数值范围。）
+- 范围校验现在覆盖会产生明显错误输出的参数：`--divisions`（1–64）、`--protect`（0 ≤ p < 1）、`--pre-gain`（0.01–8.0）、`--strength`（0–1）在入口就会被拒。预览辅助脚本的尺寸参数与 `cube-to-hald.py` 的 `--level` 仍未校验。
 - HaldCLUT TIFF 输入在部分核心路径里被接受，但质检与拼图的文件发现只包括 `.cube` 与 `.png`。各脚本的格式覆盖**并不一致**。
 - `scripts/bake-spectral-luts.py --noise` **目前未使用**。
 - 仓库在 [`references/hosts.md`](references/hosts.md) 里给出了宿主指引，但该文档**不能替代**对你要发布的那个具体宿主版本、操作系统、相机与基底配置文件的实测。

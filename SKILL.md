@@ -18,7 +18,8 @@ description: 把胶片模拟外观（.cube LUT / HaldCLUT PNG / 光谱模拟烘�
    并且它会自动写时间戳备份。**永远不要**为了"省事"加 `--in-place`。
 2. **安装前必须先看清单，再装**。装配置文件前先跑 `list` 或 `install --dry-run`；
    目标目录里若有同名文件且内容不同，脚本会**拒绝执行**并退出（需要 `--force` 才覆盖，覆盖前自动备份）。
-   **不要**直接 `--force`——先把冲突念给用户听，确认那些同名文件不是他原有的配置。
+   **不要**直接 `--force`——先把冲突念给用户听，**得到用户确认**后再动手；覆盖前会自动备份，
+   `remove` 也会把被覆盖的旧文件恢复回来。
 3. **零产物 = 失败**。生成器在"生成 0 个"时返回非零退出码并且不写任何文件。
    如果你看到"生成 0 个"，**不要**报告成功：它意味着输入没被识别（见下一条）或参数写错。
 4. **文件名默认全都处理，不存在"名字不在表里就被跳过"**。`lut-to-ccprofile.py` 默认处理任意
@@ -29,7 +30,7 @@ description: 把胶片模拟外观（.cube LUT / HaldCLUT PNG / 光谱模拟烘�
 5. **标定与生成必须同口径**。生成时 `--calibration` 里记录的 `mode`/`protect` 与本次命令不一致，
    脚本**直接拒绝**（不是提醒）。标定时 `--protect 0.68`，生成时也要 `--protect 0.68`，否则重跑标定。
 6. **验收凭证要真算，不要手填**。用 `verify-delivery.py` 从产物算出 `verification.json`；
-   它会把**算不出来**的项显式标成 `null` + `unrecomputed`，那些项**不等于通过**。
+   结果分三态：`pass` / `partial`（有项缺输入没算，退出码 3，**不等于通过**）/ `fail`。
    不要把示例数字抄进去，也不要声称验证了没验证的东西。
 
 ## 1. 什么时候用、什么时候不用
@@ -84,7 +85,7 @@ PY="$SKILL_ROOT/.venv/bin/python"                # 之后一律用绝对路径�
 "$PY" "$SKILL_ROOT/scripts/lut-to-ccprofile.py" --dir "$FILMSIM_ROOT/luts" \
       --calibration "$FILMSIM_ROOT/luts/_calibration.json" \
       --out "$FILMSIM_ROOT/lr-ccprofiles" \
-      --space display --protect 0.68 --label "护高光"
+      --space display --protect 0.68 --mode brightness --label "护高光"
 
 # 4) 先看清单，确认没有冲突
 "$PY" "$SKILL_ROOT/scripts/install_ccprofiles.py" list --src "$FILMSIM_ROOT/lr-ccprofiles"
@@ -129,8 +130,9 @@ PY="$SKILL_ROOT/.venv/bin/python"                # 之后一律用绝对路径�
 ```
 
 `lr-filmsim.py` 也吃 HaldCLUT PNG（自动识别 level，超大网格自动降采样）。
-`apply-look.sh` 是按简写名套图的 POSIX 包装，需要 bash；它的默认 `PRE_GAIN=0.3472` 只是
-spektrafilm 的兜底值，**要复用逐卷标定请显式传 `PRE_GAIN`**，或者直接用 `lr-filmsim.py --calibration`。
+**`apply-look.sh` 与 `try-looks.py` 不是等价主路径**：它们不吃 `--calibration`，也不套用与
+配置文件一致的护高光口径；`apply-look.sh` 的默认 `PRE_GAIN=0.3472` 只是 spektrafilm 的兜底值。
+需要「逐卷标定 + 同口径护高光」就用 `lr-filmsim.py --calibration --protect`，wrapper 只适合快速试版。
 
 **注意已知的输出保真边界**：原地/写盘都会丢失 TIFF 元数据、丢弃 alpha 与额外通道、
 不做 ICC 转换、灰度图按红通道还回。这些在 `references/pitfalls.md` 与 README 的
@@ -202,13 +204,19 @@ bash "$SKILL_ROOT/scripts/fetch_sources.sh" rt          # RawTherapee HaldCLUT�
 
 | 类别 | 含义 | 怎么处理 |
 |---|---|---|
-| 已复算且通过 | 脚本从产物算出来的数字，全部达标 | 可以据报告成功 |
-| `failed` | 复算出来不达标 | **不要报告成功**；修参数或重新标定 |
-| `unrecomputed` | 缺输入算不出来（例如没给源 LUT 或真实照片） | **不等于通过**；要么补输入，要么明说这项没验 |
+| `verdict: pass`（退出码 0） | 必需项全部由脚本复算并通过 | 可以据报告成功 |
+| `verdict: partial`（退出码 3） | 算出来的都过了，但有指标**缺输入没算** | **这不是通过**。补 `--lut`/`--calibration`/`--images`；本次确实不需要图片级验收才加 `--allow-partial` |
+| `verdict: fail`（退出码 1） | 有指标不达标，或声明了 `--require-images` 却没给图片 | **不要报告成功**；修参数、重新标定或补图片 |
+
+判定规则：**没有复算 ≠ 通过**。`unrecomputed` 里的项在任何情况下都不能算作达标。
 
 可复算项：表 ID = 表内容 MD5、元数据/基底配对、灰阶响应、中灰、纯白；
 给 `--lut` 可复算编码往返误差 `decode_error_lsb`；
 给 `--images <真实照片>` 可复算亮度比 / 最亮 5% 中位 / ≥250 占比 / 高光细节 std。
+
+**图片级阈值是两段式判定的**：原图自己达到绝对目标时按**绝对目标**判（更严）；原图本身就达不到时，
+才退到「保留率」下限（如 ≥250 占比不低于原图的 80%），并写进 `thresholds_used.basis`。
+两条都保证同一件事：**输出不得比原图差**。
 
 **参考阈值不是历史实测值**：`references/calibration.md` §0 说明哪些数字是未归档的历史报告值、
 CI 到底证明了什么范围。不要把它们说成"实测结果"。
@@ -220,7 +228,7 @@ CI 到底证明了什么范围。不要把它们说成"实测结果"。
 | "生成 0 个" | 视为失败。检查输入目录（只扫顶层、不递归）、文件扩展名、`--only-known`/`--only` 是否误用 |
 | 标定口径不一致被拒 | 按本次 `--protect` 重跑 `calibrate-luts.py`，不要绕过检查 |
 | 安装被冲突拦住 | 把冲突文件名念给用户，确认是他原有配置后再 `--force`（会自动备份） |
-| 装错了要回滚 | `install_ccprofiles.py remove`（按 manifest 精确回滚；被外部改过的文件会跳过而不是删掉） |
+| 装错了要回滚 | `install_ccprofiles.py remove`：**被覆盖过的旧文件从备份恢复**，新增的删除；被外部改过或备份缺失时中止而不是硬来。先跑 `--dry-run` 看它打算恢复/删哪些 |
 | 原图被原地改坏 | 备份在源文件同目录 `.filmsim-backups/<名字>.<时间戳>.bak` |
 | 输出的 XMP 让 LR 报错 | 生成器会先做 XML 复读；若仍异常，用 `verify-delivery.py` 查表 ID 与元数据配对 |
 | 宿主不认产物 | 只能给用户排查清单（基础 dcp、重启、RAW 还是 JPEG）；**这一步仓库无法替他验证** |

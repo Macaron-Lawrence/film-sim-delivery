@@ -391,6 +391,19 @@ def main(argv=None) -> int:
         print(f"[lr-filmsim] LUT 不存在：{args.lut}", file=sys.stderr)
         return 2
 
+    bad = []
+    if not (0.0 <= args.strength <= 1.0):
+        bad.append(f"--strength {args.strength}（要求 0–1）")
+    if not (0.0 <= args.protect < 1.0):
+        bad.append(f"--protect {args.protect}（要求 0 ≤ protect < 1）")
+    if not (0.01 <= args.pre_gain <= 8.0):
+        bad.append(f"--pre-gain {args.pre_gain}（要求 0.01–8.0）")
+    if bad:
+        print("[lr-filmsim] 参数越界，已中止：", file=sys.stderr)
+        for b in bad:
+            print(f"    {b}", file=sys.stderr)
+        return 2
+
     # 安全默认：必须显式选择落盘位置。缺省原地改写是过去的行为，会导致用户原图被覆盖。
     if args.out and args.in_place:
         print("[lr-filmsim] --out 与 --in-place 互斥，请只选一个", file=sys.stderr)
